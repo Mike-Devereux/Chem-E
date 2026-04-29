@@ -13,6 +13,11 @@ Production deployment will use Apache2, but Apache2 is not required during devel
 - Virtual environment
 - SQLite for early development
 
+## Environment
+
+- django is installed using uv to /home/devereux/chem-E
+- SQLite3 is in the same uv environment, with the file /home/devereux/chem-E/db.sqlite3
+
 ## Setup
 - To set up and launch django in a new venv using uv:
 
@@ -30,5 +35,14 @@ python manage.py runserver
 cd ~/chem-E
 source bin/activate
 cursor
+```
+- To link to Github, create a new repository on the Github website, then open a terminal in cursor and:
+```bash
+git remote add origin https://github.com/Mike-Devereux/Chem-E
+git status
+git branch -M main
+git add <filelist>
+git commit -m "Initial commit"
+git push -u origin main
 ```
 
