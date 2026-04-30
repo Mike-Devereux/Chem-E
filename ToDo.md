@@ -2,12 +2,12 @@
 
 ## Phase 0 — Project setup
 
-* [ ] Create Django project
-* [ ] Create main app (e.g. `core` or `elearning`)
-* [ ] Configure SQLite database
-* [ ] Configure media file storage (for uploads)
-* [ ] Set up basic project structure (settings split optional)
-* [ ] Create Git repository
+* [x] Create Git repository
+* [x] Create Django project named `chem_e`
+* [x] Configure SQLite database
+* [x] Create main app named `core`
+* [x] Configure media file storage (for uploads)
+* [x] Set up basic project structure
 
 ---
 
