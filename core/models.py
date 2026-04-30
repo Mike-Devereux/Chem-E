@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.db import models
 
@@ -145,3 +146,60 @@ class ExerciseVariant(models.Model):
 
     def __str__(self):
         return f"{self.exercise.title} - Variant {self.id}"
+
+
+class Result(models.Model):
+    student = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="results",
+    )
+    course = models.ForeignKey(
+        Course,
+        on_delete=models.PROTECT,
+        related_name="results",
+    )
+    tutorial = models.ForeignKey(
+        Tutorial,
+        on_delete=models.PROTECT,
+        related_name="results",
+    )
+    exercise = models.ForeignKey(
+        Exercise,
+        on_delete=models.PROTECT,
+        related_name="results",
+    )
+    assigned_variant = models.ForeignKey(
+        ExerciseVariant,
+        on_delete=models.PROTECT,
+        related_name="results",
+    )
+    submitted_numerical_value = models.DecimalField(max_digits=12, decimal_places=4, blank=True, null=True)
+    uploaded_file = models.FileField(upload_to="results/submissions/", blank=True, null=True)
+    score = models.DecimalField(max_digits=8, decimal_places=2, default=0)
+    is_correct = models.BooleanField(blank=True, null=True)
+    is_manually_graded = models.BooleanField(default=False)
+    feedback = models.TextField(blank=True)
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    graded_at = models.DateTimeField(blank=True, null=True)
+    graded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="graded_results",
+        blank=True,
+        null=True,
+    )
+    is_archived = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["-submitted_at", "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["student", "exercise"],
+                condition=models.Q(is_archived=False),
+                name="core_result_unique_active_student_exercise",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.student.email} - {self.exercise.title}"

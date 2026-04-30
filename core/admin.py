@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 
-from .models import Course, Exercise, ExerciseVariant, Tutorial, User
+from .models import Course, Exercise, ExerciseVariant, Result, Tutorial, User
 
 
 @admin.register(User)
@@ -59,3 +59,21 @@ class ExerciseVariantAdmin(admin.ModelAdmin):
     list_filter = ("exercise__tutorial__course", "exercise__exercise_type")
     search_fields = ("exercise__title", "exercise__tutorial__title", "exercise__tutorial__course__title")
     ordering = ("exercise", "id")
+
+
+@admin.register(Result)
+class ResultAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "student",
+        "exercise",
+        "score",
+        "is_correct",
+        "is_manually_graded",
+        "is_archived",
+        "submitted_at",
+        "graded_at",
+    )
+    list_filter = ("is_correct", "is_manually_graded", "is_archived", "course", "exercise__exercise_type")
+    search_fields = ("student__email", "exercise__title", "tutorial__title", "course__title")
+    ordering = ("-submitted_at",)
