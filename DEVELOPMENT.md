@@ -50,6 +50,7 @@ git commit -m "Initial commit"
 git push -u origin main
 ```
 - Each time cursor is restarted, use the files SPEC.md, TODO.md and DECISIONS.md to record the context required by the AI
+- Password reset emails use Django's console email backend in development, so reset links are printed in the terminal running `python manage.py runserver`.
 - Load the context by starting the first prompt with something like:
 
 > Read SPEC.md, TODO.md, DECISIONS.md and the current Django project structure.

@@ -16,8 +16,8 @@
 * [x] Use Django built-in User model or extend it
 * [x] Add roles: student, supervisor, administrator
 * [x] Enforce email domain restriction (`@unibas.ch`, `@stud.unibas.ch`)
-* [ ] Implement registration form
-* [ ] Implement login/logout
+* [x] Implement registration form
+* [x] Implement login/logout
 * [ ] Implement password reset via email
 * [ ] Restrict access to pages based on role
 

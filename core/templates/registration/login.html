@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Login</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 2rem;
+            max-width: 32rem;
+        }
+        form {
+            display: grid;
+            gap: 0.75rem;
+        }
+        input, button {
+            font: inherit;
+            padding: 0.5rem;
+        }
+        .errorlist {
+            color: #b00020;
+            margin: 0.25rem 0;
+            padding-left: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <h1>Login</h1>
+    <nav>
+        <a href="/">Home</a> |
+        <a href="/register/">Register</a>
+    </nav>
+    <form method="post">
+        {% csrf_token %}
+        {{ form.as_p }}
+        <button type="submit">Login</button>
+    </form>
+    <p><a href="/password-reset/">Forgot password?</a></p>
+</body>
+</html>
