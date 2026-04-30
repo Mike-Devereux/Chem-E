@@ -18,8 +18,8 @@
 * [x] Enforce email domain restriction (`@unibas.ch`, `@stud.unibas.ch`)
 * [x] Implement registration form
 * [x] Implement login/logout
-* [ ] Implement password reset via email
-* [ ] Restrict access to pages based on role
+* [x] Implement password reset via email
+* [x] Restrict access to pages based on role
 
 ---
 

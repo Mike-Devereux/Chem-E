@@ -16,6 +16,13 @@
     <h1>Chem-E</h1>
     {% if user.is_authenticated %}
         <p>Signed in as {{ user.email }}.</p>
+        {% if user.role == "student" %}
+            <p>Student dashboard placeholder</p>
+        {% elif user.role == "supervisor" %}
+            <p>Supervisor dashboard placeholder</p>
+        {% elif user.role == "administrator" %}
+            <p>Administrator dashboard placeholder</p>
+        {% endif %}
         <form method="post" action="/logout/">
             {% csrf_token %}
             <button type="submit">Logout</button>
