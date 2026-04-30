@@ -1,6 +1,8 @@
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.db import models
 
+from .validators import validate_university_email_domain
+
 
 class UserManager(BaseUserManager):
     """Manager for custom user model using email as identifier."""
@@ -41,7 +43,7 @@ class User(AbstractUser):
         ADMINISTRATOR = "administrator", "Administrator"
 
     username = None
-    email = models.EmailField(unique=True)
+    email = models.EmailField(unique=True, validators=[validate_university_email_domain])
     role = models.CharField(max_length=20, choices=Role.choices, default=Role.STUDENT)
 
     USERNAME_FIELD = "email"

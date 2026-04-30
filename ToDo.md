@@ -13,9 +13,9 @@
 
 ## Phase 1 — Users & authentication
 
-* [ ] Use Django built-in User model or extend it
-* [ ] Add roles: student, supervisor, administrator
-* [ ] Enforce email domain restriction (`@unibas.ch`, `@stud.unibas.ch`)
+* [x] Use Django built-in User model or extend it
+* [x] Add roles: student, supervisor, administrator
+* [x] Enforce email domain restriction (`@unibas.ch`, `@stud.unibas.ch`)
 * [ ] Implement registration form
 * [ ] Implement login/logout
 * [ ] Implement password reset via email

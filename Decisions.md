@@ -5,3 +5,5 @@
 
 - Django project is named "chem_e"
 - Django app is named "core"
+
+- A custom Django User model is used with unique e-mail address and without username
