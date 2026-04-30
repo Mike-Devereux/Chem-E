@@ -50,3 +50,98 @@ class User(AbstractUser):
     REQUIRED_FIELDS = []
 
     objects = UserManager()
+
+
+class Course(models.Model):
+    title = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(
+        "core.User",
+        on_delete=models.PROTECT,
+        related_name="courses_created",
+    )
+
+    def __str__(self):
+        return self.title
+
+
+class Tutorial(models.Model):
+    course = models.ForeignKey(
+        Course,
+        on_delete=models.CASCADE,
+        related_name="tutorials",
+    )
+    title = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    order_index = models.PositiveIntegerField()
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["course_id", "order_index", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["course", "order_index"],
+                name="core_tutorial_unique_order_per_course",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.course.title} - {self.title}"
+
+
+class Exercise(models.Model):
+    class ExerciseType(models.TextChoices):
+        NUMERICAL = "numerical", "Numerical"
+        DOCUMENT_UPLOAD = "document_upload", "Document upload"
+
+    tutorial = models.ForeignKey(
+        Tutorial,
+        on_delete=models.CASCADE,
+        related_name="exercises",
+    )
+    title = models.CharField(max_length=200)
+    order_index = models.PositiveIntegerField()
+    exercise_type = models.CharField(
+        max_length=20,
+        choices=ExerciseType.choices,
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["tutorial_id", "order_index", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tutorial", "order_index"],
+                name="core_exercise_unique_order_per_tutorial",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.tutorial.title} - {self.title}"
+
+
+class ExerciseVariant(models.Model):
+    exercise = models.ForeignKey(
+        Exercise,
+        on_delete=models.CASCADE,
+        related_name="variants",
+    )
+    exercise_text = models.TextField()
+    image = models.ImageField(upload_to="exercise_variants/images/", blank=True, null=True)
+    reference_solution = models.DecimalField(max_digits=12, decimal_places=4, blank=True, null=True)
+    absolute_tolerance = models.DecimalField(max_digits=12, decimal_places=4, blank=True, null=True)
+    available_points = models.DecimalField(max_digits=8, decimal_places=2, default=1)
+    supervisor_notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["exercise_id", "id"]
+
+    def __str__(self):
+        return f"{self.exercise.title} - Variant {self.id}"

@@ -12,6 +12,7 @@ Production deployment will use Apache2, but Apache2 is not required during devel
 - Git
 - Virtual environment
 - SQLite for early development
+- Pillow for ImageField
 
 ## Environment
 
