@@ -39,24 +39,24 @@
 
 (Start with Django admin before building custom UI)
 
-- [ ] Allow supervisors to access Django admin
-- [ ] Allow supervisors to create and edit their own courses
-- [ ] Allow supervisors to create and edit tutorials within their courses
-- [ ] Allow supervisors to create and edit exercises within tutorials
-- [ ] Allow supervisors to create and edit exercise variants within exercises
+- [x] Allow supervisors to access Django admin
+- [x] Allow supervisors to create and edit their own courses
+- [x] Allow supervisors to create and edit tutorials within their courses
+- [x] Allow supervisors to create and edit exercises within tutorials
+- [x] Allow supervisors to create and edit exercise variants within exercises
 
-- [ ] Ensure the following fields are editable in admin:
-  - [ ] exercise type (numerical / upload) (Exercise)
-  - [ ] active/unlocked flag (Exercise)
-  - [ ] reference solution (ExerciseVariant)
-  - [ ] tolerance (ExerciseVariant)
-  - [ ] available points (ExerciseVariant)
+- [x] Ensure the following fields are editable in admin:
+  - [x] exercise type (numerical / upload) (Exercise)
+  - [x] active/unlocked flag (Exercise)
+  - [x] reference solution (ExerciseVariant)
+  - [x] tolerance (ExerciseVariant)
+  - [x] available points (ExerciseVariant)
 
-- [ ] Restrict supervisors to only see and edit their own content
-- [ ] Improve admin usability:
-  - [ ] inline editing (variants under exercises, etc.)
-  - [ ] list display fields
-  - [ ] filters and search
+- [x] Restrict supervisors to only see and edit their own content
+- [x] Improve admin usability:
+  - [x] inline editing (variants under exercises, etc.)
+  - [x] list display fields
+  - [x] filters and search
 
 ---
 

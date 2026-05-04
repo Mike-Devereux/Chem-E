@@ -76,6 +76,13 @@ class ExerciseInline(admin.TabularInline):
     ordering = ("order_index", "id")
     show_change_link = True
 
+    def formfield_for_dbfield(self, db_field, request, **kwargs):
+        formfield = super().formfield_for_dbfield(db_field, request, **kwargs)
+        if db_field.name == "is_active":
+            formfield.label = "Active / unlocked"
+            formfield.help_text = "Students can attempt this exercise when enabled."
+        return formfield
+
 
 class ExerciseVariantInline(admin.TabularInline):
     model = ExerciseVariant
@@ -159,7 +166,15 @@ class TutorialAdmin(SupervisorOwnedContentAdmin):
 class ExerciseAdmin(SupervisorOwnedContentAdmin):
     owner_lookup = "tutorial__course__created_by"
     owner_attr_path = "tutorial__course__created_by"
-    list_display = ("title", "tutorial", "exercise_type", "order_index", "is_active", "created_at", "updated_at")
+    list_display = (
+        "title",
+        "tutorial",
+        "exercise_type",
+        "order_index",
+        "active_unlocked_status",
+        "created_at",
+        "updated_at",
+    )
     list_filter = ("is_active", "exercise_type", "tutorial", "tutorial__course")
     search_fields = ("title", "tutorial__title", "tutorial__course__title", "tutorial__course__created_by__email")
     ordering = ("tutorial", "order_index", "title")
@@ -169,6 +184,17 @@ class ExerciseAdmin(SupervisorOwnedContentAdmin):
         if db_field.name == "tutorial" and self._is_supervisor(request.user):
             kwargs["queryset"] = Tutorial.objects.filter(course__created_by=request.user)
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
+
+    def formfield_for_dbfield(self, db_field, request, **kwargs):
+        formfield = super().formfield_for_dbfield(db_field, request, **kwargs)
+        if db_field.name == "is_active":
+            formfield.label = "Active / unlocked"
+            formfield.help_text = "Students can attempt this exercise when enabled."
+        return formfield
+
+    @admin.display(boolean=True, ordering="is_active", description="Active / unlocked")
+    def active_unlocked_status(self, obj):
+        return obj.is_active
 
 
 @admin.register(ExerciseVariant)

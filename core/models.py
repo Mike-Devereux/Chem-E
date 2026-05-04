@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser, BaseUserManager
+from django.core.exceptions import ValidationError
 from django.db import models
 
 from .validators import validate_university_email_domain
@@ -138,6 +139,14 @@ class Exercise(models.Model):
     def __str__(self):
         return f"{self.tutorial.title} - {self.title}"
 
+    def clean(self):
+        super().clean()
+        valid_types = {self.ExerciseType.NUMERICAL, self.ExerciseType.DOCUMENT_UPLOAD}
+        if self.exercise_type not in valid_types:
+            raise ValidationError(
+                {"exercise_type": "Exercise type must be either numerical or document_upload."}
+            )
+
 
 class ExerciseVariant(models.Model):
     exercise = models.ForeignKey(
@@ -159,6 +168,32 @@ class ExerciseVariant(models.Model):
 
     def __str__(self):
         return f"{self.exercise.title} - Variant {self.id}"
+
+    def clean(self):
+        super().clean()
+        errors = {}
+
+        if self.available_points is not None and self.available_points < 0:
+            errors["available_points"] = "Available points must be non-negative."
+        if self.absolute_tolerance is not None and self.absolute_tolerance < 0:
+            errors["absolute_tolerance"] = "Tolerance must be non-negative."
+
+        if self.exercise_id and self.exercise.exercise_type == Exercise.ExerciseType.NUMERICAL:
+            if self.reference_solution is None:
+                errors["reference_solution"] = (
+                    "Reference solution is required for numerical exercises."
+                )
+            if self.absolute_tolerance is None:
+                errors["absolute_tolerance"] = (
+                    "Tolerance is required for numerical exercises."
+                )
+            if self.available_points is None:
+                errors["available_points"] = (
+                    "Available points are required for numerical exercises."
+                )
+
+        if errors:
+            raise ValidationError(errors)
 
 
 class Result(models.Model):
