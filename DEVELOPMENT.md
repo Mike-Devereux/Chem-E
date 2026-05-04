@@ -61,3 +61,11 @@ git push -u origin main
 > The current goal is ...
 >
 > Do not make broad changes. Before editing, summarize the files you intend to modify.
+
+## Demo data
+
+To populate the local database with sample courses, tutorials, exercises, and variants:
+
+```bash
+uv run python manage.py seed_demo_data
+```
