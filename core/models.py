@@ -3,7 +3,7 @@ from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.core.exceptions import ValidationError
 from django.db import models
 
-from .validators import validate_university_email_domain
+from .validators import validate_student_submission_file, validate_university_email_domain
 
 
 class UserManager(BaseUserManager):
@@ -223,7 +223,12 @@ class Result(models.Model):
         related_name="results",
     )
     submitted_numerical_value = models.DecimalField(max_digits=12, decimal_places=4, blank=True, null=True)
-    uploaded_file = models.FileField(upload_to="results/submissions/", blank=True, null=True)
+    uploaded_file = models.FileField(
+        upload_to="student_submissions/",
+        blank=True,
+        null=True,
+        validators=[validate_student_submission_file],
+    )
     score = models.DecimalField(max_digits=8, decimal_places=2, default=0)
     is_correct = models.BooleanField(blank=True, null=True)
     is_manually_graded = models.BooleanField(default=False)

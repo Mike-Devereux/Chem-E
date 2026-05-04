@@ -2,12 +2,13 @@ import random
 from decimal import Decimal
 
 from django.contrib.auth.mixins import LoginRequiredMixin
+from django.core.files.storage import default_storage
 from django.db import IntegrityError
 from django.utils import timezone
 from django.urls import reverse_lazy
 from django.views.generic import CreateView, DetailView, ListView
 
-from .forms import NumericalAnswerForm, RegistrationForm
+from .forms import NumericalAnswerForm, RegistrationForm, UploadSubmissionForm
 from .grading import is_numerical_answer_correct
 from .models import Course, Exercise, Result, Tutorial, User
 
@@ -56,12 +57,20 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
             result = self._get_or_assign_student_result()
             context["variant"] = result.assigned_variant if result else None
             context["existing_result"] = (
-                result if result and result.submitted_numerical_value is not None else None
+                result
+                if result
+                and (
+                    result.submitted_numerical_value is not None
+                    or bool(result.uploaded_file)
+                )
+                else None
             )
         else:
             context["variant"] = self.object.variants.order_by("id").first()
         if self.object.exercise_type == Exercise.ExerciseType.NUMERICAL:
             context["numerical_form"] = kwargs.get("numerical_form") or NumericalAnswerForm()
+        elif self.object.exercise_type == Exercise.ExerciseType.DOCUMENT_UPLOAD:
+            context["upload_form"] = kwargs.get("upload_form") or UploadSubmissionForm()
         return context
 
     def _get_or_assign_student_result(self):
@@ -91,6 +100,43 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
 
     def post(self, request, *args, **kwargs):
         self.object = self.get_object()
+        if self.object.exercise_type == Exercise.ExerciseType.DOCUMENT_UPLOAD:
+            form = UploadSubmissionForm(request.POST, request.FILES)
+            if form.is_valid() and self.request.user.role == User.Role.STUDENT:
+                result = self._get_or_assign_student_result()
+                if result.is_manually_graded:
+                    form.add_error(
+                        None,
+                        "This submission has already been manually graded and cannot be replaced.",
+                    )
+                    return self.render_to_response(self.get_context_data(upload_form=form))
+
+                old_file_name = result.uploaded_file.name if result.uploaded_file else None
+                result.uploaded_file = form.cleaned_data["uploaded_file"]
+                result.submitted_at = timezone.now()
+                result.score = Decimal("0")
+                result.is_correct = None
+                result.is_manually_graded = False
+                result.submitted_numerical_value = None
+                result.save(
+                    update_fields=[
+                        "uploaded_file",
+                        "submitted_at",
+                        "score",
+                        "is_correct",
+                        "is_manually_graded",
+                        "submitted_numerical_value",
+                    ]
+                )
+                # Delete the previous upload only after new save succeeds.
+                if old_file_name and old_file_name != result.uploaded_file.name:
+                    if default_storage.exists(old_file_name):
+                        default_storage.delete(old_file_name)
+                return self.render_to_response(
+                    self.get_context_data(upload_form=UploadSubmissionForm())
+                )
+            return self.render_to_response(self.get_context_data(upload_form=form))
+
         if self.object.exercise_type != Exercise.ExerciseType.NUMERICAL:
             return self.render_to_response(self.get_context_data())
 

@@ -69,3 +69,9 @@ To populate the local database with sample courses, tutorials, exercises, and va
 ```bash
 uv run python manage.py seed_demo_data
 ```
+
+## Local upload testing
+
+Uploaded files are stored under `MEDIA_ROOT` in the local `media/` directory.
+
+The `media/` directory is for development data and should not be committed to Git.

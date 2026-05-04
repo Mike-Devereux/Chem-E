@@ -33,6 +33,34 @@
             <p>Correct: {{ existing_result.is_correct }}</p>
             <p>Score: {{ existing_result.score }}</p>
         {% endif %}
+    {% elif exercise.exercise_type == "document_upload" %}
+        <h2>Upload solution file</h2>
+        <form method="post" enctype="multipart/form-data">
+            {% csrf_token %}
+            {{ upload_form.as_p }}
+            <button type="submit">Upload</button>
+        </form>
+        {% if existing_result %}
+            {% if existing_result.uploaded_file %}
+                <h2>Your latest upload</h2>
+                <p>
+                    <a href="{{ existing_result.uploaded_file.url }}">
+                        {{ existing_result.uploaded_file.name }}
+                    </a>
+                </p>
+            {% endif %}
+            <p>
+                Grading status:
+                {% if existing_result.is_manually_graded %}
+                    Graded
+                {% else %}
+                    Pending manual grading
+                {% endif %}
+            </p>
+            {% if existing_result.is_manually_graded %}
+                <p>Score: {{ existing_result.score }}</p>
+            {% endif %}
+        {% endif %}
     {% endif %}
 </body>
 </html>

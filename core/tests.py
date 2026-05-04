@@ -1,9 +1,13 @@
 from django.core.exceptions import ValidationError
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.files.storage import default_storage
 from django.db import IntegrityError
 from django.http import HttpResponse
 from django.test import TestCase, override_settings
 from django.urls import path, reverse
 from django.views import View
+import os
+import tempfile
 
 from .access import (
     AdministratorRequiredMixin,
@@ -609,6 +613,8 @@ class NumericalAnswerFormViewTests(TestCase):
         response = self.client.get(reverse("exercise_detail", args=[self.upload_exercise.id]))
         self.assertNotContains(response, "Submit numerical answer")
         self.assertNotIn("numerical_form", response.context)
+        self.assertContains(response, "Upload solution file")
+        self.assertIn("upload_form", response.context)
 
     def test_numerical_submission_stores_result_fields(self):
         self.client.force_login(self.student)
@@ -680,6 +686,138 @@ class NumericalAnswerFormViewTests(TestCase):
         self.assertContains(revisit_response, "Correct: True")
         self.assertContains(revisit_response, "Score: 2.00")
 
+    def test_upload_submission_saves_file_to_existing_result(self):
+        self.client.force_login(self.student)
+        response = self.client.post(
+            reverse("exercise_detail", args=[self.upload_exercise.id]),
+            {"uploaded_file": SimpleUploadedFile("solution.pdf", b"upload content")},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Your latest upload")
+
+        result = Result.objects.get(
+            student=self.student,
+            exercise=self.upload_exercise,
+            is_archived=False,
+        )
+        self.assertTrue(bool(result.uploaded_file))
+        self.assertTrue(result.uploaded_file.name.endswith(".pdf"))
+        self.assertIn("student_submissions/", result.uploaded_file.name)
+        self.assertEqual(result.assigned_variant.exercise, self.upload_exercise)
+        self.assertEqual(str(result.score), "0.00")
+        self.assertFalse(result.is_manually_graded)
+        self.assertIsNone(result.submitted_numerical_value)
+
+    def test_upload_submission_can_replace_file_before_manual_grading(self):
+        media_dir = tempfile.mkdtemp()
+        try:
+            with self.settings(MEDIA_ROOT=media_dir):
+                self.client.force_login(self.student)
+                self.client.post(
+                    reverse("exercise_detail", args=[self.upload_exercise.id]),
+                    {"uploaded_file": SimpleUploadedFile("first.pdf", b"first")},
+                )
+                result = Result.objects.get(
+                    student=self.student,
+                    exercise=self.upload_exercise,
+                    is_archived=False,
+                )
+                old_name = result.uploaded_file.name
+                self.assertTrue(default_storage.exists(old_name))
+
+                self.client.post(
+                    reverse("exercise_detail", args=[self.upload_exercise.id]),
+                    {"uploaded_file": SimpleUploadedFile("second.pdf", b"second")},
+                )
+                result.refresh_from_db()
+                self.assertIn("second", os.path.basename(result.uploaded_file.name))
+                self.assertFalse(default_storage.exists(old_name))
+        finally:
+            for root, dirs, files in os.walk(media_dir, topdown=False):
+                for file_name in files:
+                    os.remove(os.path.join(root, file_name))
+                for dir_name in dirs:
+                    os.rmdir(os.path.join(root, dir_name))
+            os.rmdir(media_dir)
+
+    def test_upload_submission_cannot_replace_after_manual_grading(self):
+        self.client.force_login(self.student)
+        self.client.post(
+            reverse("exercise_detail", args=[self.upload_exercise.id]),
+            {"uploaded_file": SimpleUploadedFile("graded.pdf", b"graded")},
+        )
+        result = Result.objects.get(
+            student=self.student,
+            exercise=self.upload_exercise,
+            is_archived=False,
+        )
+        original_name = result.uploaded_file.name
+        result.is_manually_graded = True
+        result.save(update_fields=["is_manually_graded"])
+
+        response = self.client.post(
+            reverse("exercise_detail", args=[self.upload_exercise.id]),
+            {"uploaded_file": SimpleUploadedFile("new_attempt.pdf", b"new")},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "cannot be replaced")
+        result.refresh_from_db()
+        self.assertEqual(result.uploaded_file.name, original_name)
+
+    def test_upload_submission_rejects_disallowed_file_type(self):
+        self.client.force_login(self.student)
+        response = self.client.post(
+            reverse("exercise_detail", args=[self.upload_exercise.id]),
+            {"uploaded_file": SimpleUploadedFile("malware.exe", b"x")},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertFormError(
+            response.context["upload_form"],
+            "uploaded_file",
+            "Unsupported file extension. Allowed: pdf, docx, png, jpg, jpeg, tif, tiff.",
+        )
+        self.assertEqual(
+            Result.objects.filter(
+                student=self.student,
+                exercise=self.upload_exercise,
+                is_archived=False,
+            ).count(),
+            1,
+        )
+        result = Result.objects.get(
+            student=self.student,
+            exercise=self.upload_exercise,
+            is_archived=False,
+        )
+        self.assertFalse(bool(result.uploaded_file))
+
+    def test_upload_submission_rejects_oversized_file(self):
+        self.client.force_login(self.student)
+        response = self.client.post(
+            reverse("exercise_detail", args=[self.upload_exercise.id]),
+            {"uploaded_file": SimpleUploadedFile("big.pdf", b"a" * (20 * 1024 * 1024 + 1))},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertFormError(
+            response.context["upload_form"],
+            "uploaded_file",
+            "File size must be 20 MB or smaller.",
+        )
+        self.assertEqual(
+            Result.objects.filter(
+                student=self.student,
+                exercise=self.upload_exercise,
+                is_archived=False,
+            ).count(),
+            1,
+        )
+        result = Result.objects.get(
+            student=self.student,
+            exercise=self.upload_exercise,
+            is_archived=False,
+        )
+        self.assertFalse(bool(result.uploaded_file))
+
 
 class NumericalCheckingTests(TestCase):
     def test_correct_answer_within_tolerance(self):
@@ -699,3 +837,86 @@ class NumericalCheckingTests(TestCase):
                 absolute_tolerance="0.05",
             )
         )
+
+
+class StudentUploadValidationTests(TestCase):
+    def setUp(self):
+        self.supervisor = User.objects.create_user(
+            email="supervisor_upload_validation@unibas.ch",
+            password="test-password",
+            role=User.Role.SUPERVISOR,
+        )
+        self.student = User.objects.create_user(
+            email="student_upload_validation@unibas.ch",
+            password="test-password",
+            role=User.Role.STUDENT,
+        )
+        self.course = Course.objects.create(title="Upload Validation Course", created_by=self.supervisor)
+        self.tutorial = Tutorial.objects.create(
+            course=self.course,
+            title="Upload Validation Tutorial",
+            order_index=1,
+        )
+        self.exercise = Exercise.objects.create(
+            tutorial=self.tutorial,
+            title="Upload Validation Exercise",
+            order_index=1,
+            exercise_type=Exercise.ExerciseType.DOCUMENT_UPLOAD,
+        )
+        self.variant = ExerciseVariant.objects.create(
+            exercise=self.exercise,
+            exercise_text="Upload a document.",
+            available_points="1.00",
+        )
+
+    def test_allows_supported_file_extension(self):
+        uploaded_file = SimpleUploadedFile(
+            "solution.pdf",
+            b"dummy pdf content",
+            content_type="application/pdf",
+        )
+        result = Result(
+            student=self.student,
+            course=self.course,
+            tutorial=self.tutorial,
+            exercise=self.exercise,
+            assigned_variant=self.variant,
+            uploaded_file=uploaded_file,
+        )
+        result.full_clean()
+
+    def test_rejects_unsupported_file_extension(self):
+        uploaded_file = SimpleUploadedFile(
+            "solution.exe",
+            b"binary",
+            content_type="application/octet-stream",
+        )
+        result = Result(
+            student=self.student,
+            course=self.course,
+            tutorial=self.tutorial,
+            exercise=self.exercise,
+            assigned_variant=self.variant,
+            uploaded_file=uploaded_file,
+        )
+        with self.assertRaises(ValidationError) as ctx:
+            result.full_clean()
+        self.assertIn("uploaded_file", ctx.exception.message_dict)
+
+    def test_rejects_file_larger_than_20_mb(self):
+        uploaded_file = SimpleUploadedFile(
+            "solution.pdf",
+            b"a" * (20 * 1024 * 1024 + 1),
+            content_type="application/pdf",
+        )
+        result = Result(
+            student=self.student,
+            course=self.course,
+            tutorial=self.tutorial,
+            exercise=self.exercise,
+            assigned_variant=self.variant,
+            uploaded_file=uploaded_file,
+        )
+        with self.assertRaises(ValidationError) as ctx:
+            result.full_clean()
+        self.assertIn("uploaded_file", ctx.exception.message_dict)
