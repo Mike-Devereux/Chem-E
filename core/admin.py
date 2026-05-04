@@ -1,13 +1,11 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
+from django.db.models import Q
 
 from .models import Course, Exercise, ExerciseVariant, Result, Tutorial, User
 
 
 class SupervisorOwnedContentAdmin(admin.ModelAdmin):
-    owner_lookup = None
-    owner_attr_path = None
-
     def _is_supervisor(self, user):
         return user.is_authenticated and user.role == User.Role.SUPERVISOR
 
@@ -19,11 +17,12 @@ class SupervisorOwnedContentAdmin(admin.ModelAdmin):
     def _can_access_content_admin(self, user):
         return self._is_supervisor(user) or self._is_administrator(user)
 
-    def _is_owner(self, obj, user):
-        target = obj
-        for attr in self.owner_attr_path.split("__"):
-            target = getattr(target, attr)
-        return target == user
+    def get_supervisor_queryset(self, queryset, user):
+        return queryset.none()
+
+    def has_supervisor_object_access(self, user, obj):
+        queryset = self.get_supervisor_queryset(self.model.objects.all(), user)
+        return queryset.filter(pk=obj.pk).exists()
 
     def has_module_permission(self, request):
         return self._can_access_content_admin(request.user)
@@ -33,7 +32,7 @@ class SupervisorOwnedContentAdmin(admin.ModelAdmin):
             return False
         if obj is None or self._is_administrator(request.user):
             return True
-        return self._is_owner(obj, request.user)
+        return self.has_supervisor_object_access(request.user, obj)
 
     def has_add_permission(self, request):
         return self._can_access_content_admin(request.user)
@@ -43,21 +42,21 @@ class SupervisorOwnedContentAdmin(admin.ModelAdmin):
             return False
         if obj is None or self._is_administrator(request.user):
             return True
-        return self._is_owner(obj, request.user)
+        return self.has_supervisor_object_access(request.user, obj)
 
     def has_delete_permission(self, request, obj=None):
         if not self._can_access_content_admin(request.user):
             return False
         if obj is None or self._is_administrator(request.user):
             return True
-        return self._is_owner(obj, request.user)
+        return self.has_supervisor_object_access(request.user, obj)
 
     def get_queryset(self, request):
         queryset = super().get_queryset(request)
         if self._is_administrator(request.user):
             return queryset
         if self._is_supervisor(request.user):
-            return queryset.filter(**{self.owner_lookup: request.user})
+            return self.get_supervisor_queryset(queryset, request.user)
         return queryset.none()
 
 
@@ -127,13 +126,14 @@ class UserAdmin(BaseUserAdmin):
 
 @admin.register(Course)
 class CourseAdmin(SupervisorOwnedContentAdmin):
-    owner_lookup = "created_by"
-    owner_attr_path = "created_by"
     list_display = ("title", "created_by", "is_active", "created_at")
     list_filter = ("is_active", "created_at")
     search_fields = ("title", "description", "created_by__email")
     ordering = ("title",)
     inlines = (TutorialInline,)
+
+    def get_supervisor_queryset(self, queryset, user):
+        return queryset.filter(Q(created_by=user) | Q(supervisors=user)).distinct()
 
     def get_exclude(self, request, obj=None):
         if self._is_supervisor(request.user) and not self._is_administrator(request.user):
@@ -144,28 +144,33 @@ class CourseAdmin(SupervisorOwnedContentAdmin):
         if not change and self._is_supervisor(request.user):
             obj.created_by = request.user
         super().save_model(request, obj, form, change)
+        if self._is_supervisor(request.user):
+            obj.supervisors.add(request.user)
 
 
 @admin.register(Tutorial)
 class TutorialAdmin(SupervisorOwnedContentAdmin):
-    owner_lookup = "course__created_by"
-    owner_attr_path = "course__created_by"
     list_display = ("title", "course", "order_index", "is_active", "created_at")
     list_filter = ("is_active", "course")
     search_fields = ("title", "description", "course__title", "course__created_by__email")
     ordering = ("course", "order_index", "title")
     inlines = (ExerciseInline,)
 
+    def get_supervisor_queryset(self, queryset, user):
+        return queryset.filter(
+            Q(course__created_by=user) | Q(course__supervisors=user)
+        ).distinct()
+
     def formfield_for_foreignkey(self, db_field, request, **kwargs):
         if db_field.name == "course" and self._is_supervisor(request.user):
-            kwargs["queryset"] = Course.objects.filter(created_by=request.user)
+            kwargs["queryset"] = Course.objects.filter(
+                Q(created_by=request.user) | Q(supervisors=request.user)
+            ).distinct()
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
 
 @admin.register(Exercise)
 class ExerciseAdmin(SupervisorOwnedContentAdmin):
-    owner_lookup = "tutorial__course__created_by"
-    owner_attr_path = "tutorial__course__created_by"
     list_display = (
         "title",
         "tutorial",
@@ -180,9 +185,16 @@ class ExerciseAdmin(SupervisorOwnedContentAdmin):
     ordering = ("tutorial", "order_index", "title")
     inlines = (ExerciseVariantInline,)
 
+    def get_supervisor_queryset(self, queryset, user):
+        return queryset.filter(
+            Q(tutorial__course__created_by=user) | Q(tutorial__course__supervisors=user)
+        ).distinct()
+
     def formfield_for_foreignkey(self, db_field, request, **kwargs):
         if db_field.name == "tutorial" and self._is_supervisor(request.user):
-            kwargs["queryset"] = Tutorial.objects.filter(course__created_by=request.user)
+            kwargs["queryset"] = Tutorial.objects.filter(
+                Q(course__created_by=request.user) | Q(course__supervisors=request.user)
+            ).distinct()
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
     def formfield_for_dbfield(self, db_field, request, **kwargs):
@@ -199,8 +211,6 @@ class ExerciseAdmin(SupervisorOwnedContentAdmin):
 
 @admin.register(ExerciseVariant)
 class ExerciseVariantAdmin(SupervisorOwnedContentAdmin):
-    owner_lookup = "exercise__tutorial__course__created_by"
-    owner_attr_path = "exercise__tutorial__course__created_by"
     list_display = (
         "id",
         "exercise",
@@ -224,11 +234,18 @@ class ExerciseVariantAdmin(SupervisorOwnedContentAdmin):
     )
     ordering = ("exercise", "id")
 
+    def get_supervisor_queryset(self, queryset, user):
+        return queryset.filter(
+            Q(exercise__tutorial__course__created_by=user)
+            | Q(exercise__tutorial__course__supervisors=user)
+        ).distinct()
+
     def formfield_for_foreignkey(self, db_field, request, **kwargs):
         if db_field.name == "exercise" and self._is_supervisor(request.user):
             kwargs["queryset"] = Exercise.objects.filter(
-                tutorial__course__created_by=request.user
-            )
+                Q(tutorial__course__created_by=request.user)
+                | Q(tutorial__course__supervisors=request.user)
+            ).distinct()
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
     @admin.display(ordering="exercise__exercise_type", description="Exercise type")

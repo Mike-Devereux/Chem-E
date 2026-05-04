@@ -77,9 +77,19 @@ class Course(models.Model):
         on_delete=models.PROTECT,
         related_name="courses_created",
     )
+    supervisors = models.ManyToManyField(
+        "core.User",
+        related_name="courses_supervised",
+        blank=True,
+    )
 
     def __str__(self):
         return self.title
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        if self.created_by_id:
+            self.supervisors.add(self.created_by)
 
 
 class Tutorial(models.Model):

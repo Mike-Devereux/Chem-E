@@ -7,6 +7,13 @@
 </head>
 <body>
     <h1>Submissions for {{ exercise.title }}</h1>
+    <p>
+        Filter:
+        <a href="?status=all">All</a> |
+        <a href="?status=graded">Graded</a> |
+        <a href="?status=ungraded">Ungraded</a>
+    </p>
+    <p>Current filter: {{ status_filter }}</p>
 
     {% if submissions %}
         <table border="1" cellpadding="4" cellspacing="0">
@@ -14,22 +21,26 @@
                 <tr>
                     <th>Student</th>
                     <th>Submitted at</th>
-                    <th>Graded</th>
+                    <th>Status</th>
                     <th>Score</th>
+                    <th>Detail</th>
                 </tr>
             </thead>
             <tbody>
                 {% for result in submissions %}
-                    <tr>
+                    <tr{% if not result.is_manually_graded %} style="background: #fff3cd;"{% endif %}>
                         <td>{{ result.student.email }}</td>
                         <td>{{ result.submitted_at }}</td>
-                        <td>{{ result.is_manually_graded|yesno:"Yes,No" }}</td>
+                        <td>{{ result.is_manually_graded|yesno:"Graded,Ungraded" }}</td>
                         <td>
                             {% if result.is_manually_graded %}
                                 {{ result.score }}
                             {% else %}
                                 -
                             {% endif %}
+                        </td>
+                        <td>
+                            <a href="{% url 'supervisor_submission_detail' result.id %}">View</a>
                         </td>
                     </tr>
                 {% endfor %}

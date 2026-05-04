@@ -3,6 +3,7 @@ import os
 from decimal import Decimal
 
 from django.contrib.auth.mixins import LoginRequiredMixin
+from django.core.exceptions import PermissionDenied
 from django.core.files.storage import default_storage
 from django.db import IntegrityError
 from django.http import FileResponse, Http404
@@ -21,6 +22,14 @@ from .forms import (
 )
 from .grading import is_numerical_answer_correct
 from .models import Course, Exercise, Result, Tutorial, User
+
+
+def _user_can_access_course(user, course):
+    if user.is_superuser or user.role == User.Role.ADMINISTRATOR:
+        return True
+    if user.role != User.Role.SUPERVISOR:
+        return False
+    return course.supervisors.filter(id=user.id).exists()
 
 
 class CourseListView(LoginRequiredMixin, ListView):
@@ -174,12 +183,19 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
                 result.is_correct = is_correct
                 result.score = variant.available_points if is_correct else Decimal("0")
                 result.submitted_at = timezone.now()
+                # Numerical submissions are auto-graded immediately.
+                result.is_manually_graded = True
+                result.graded_at = timezone.now()
+                result.graded_by = None
                 result.save(
                     update_fields=[
                         "submitted_numerical_value",
                         "is_correct",
                         "score",
                         "submitted_at",
+                        "is_manually_graded",
+                        "graded_at",
+                        "graded_by",
                     ]
                 )
             context = self.get_context_data(
@@ -196,10 +212,17 @@ class SupervisorExerciseSubmissionsView(SupervisorRequiredMixin, DetailView):
     pk_url_kwarg = "exercise_id"
 
     def get_context_data(self, **kwargs):
+        if not _user_can_access_course(self.request.user, self.object.tutorial.course):
+            raise PermissionDenied
         context = super().get_context_data(**kwargs)
-        context["submissions"] = Result.objects.filter(exercise=self.object).select_related(
-            "student"
-        ).order_by("-submitted_at", "-id")
+        submissions = Result.objects.filter(exercise=self.object).select_related("student")
+        status_filter = self.request.GET.get("status")
+        if status_filter == "graded":
+            submissions = submissions.filter(is_manually_graded=True)
+        elif status_filter == "ungraded":
+            submissions = submissions.filter(is_manually_graded=False)
+        context["status_filter"] = status_filter or "all"
+        context["submissions"] = submissions.order_by("-submitted_at", "-id")
         return context
 
 
@@ -210,6 +233,8 @@ class SupervisorSubmissionDetailView(SupervisorRequiredMixin, DetailView):
     pk_url_kwarg = "result_id"
 
     def get_context_data(self, **kwargs):
+        if not _user_can_access_course(self.request.user, self.object.course):
+            raise PermissionDenied
         context = super().get_context_data(**kwargs)
         if self.object.exercise.exercise_type == Exercise.ExerciseType.DOCUMENT_UPLOAD:
             initial = {
@@ -223,6 +248,8 @@ class SupervisorSubmissionDetailView(SupervisorRequiredMixin, DetailView):
 
     def post(self, request, *args, **kwargs):
         self.object = self.get_object()
+        if not _user_can_access_course(request.user, self.object.course):
+            raise PermissionDenied
         if self.object.exercise.exercise_type != Exercise.ExerciseType.DOCUMENT_UPLOAD:
             return self.render_to_response(self.get_context_data())
 
@@ -249,6 +276,8 @@ class SupervisorSubmissionDetailView(SupervisorRequiredMixin, DetailView):
 class SupervisorSubmissionFileDownloadView(SupervisorRequiredMixin, View):
     def get(self, request, result_id):
         submission = get_object_or_404(Result, pk=result_id)
+        if not _user_can_access_course(request.user, submission.course):
+            raise PermissionDenied
         if not submission.uploaded_file:
             raise Http404("No uploaded file for this submission.")
         return FileResponse(

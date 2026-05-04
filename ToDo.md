@@ -62,41 +62,53 @@
 
 ## Phase 4 — Student-facing basics
 
-* [ ] Create course list page
-* [ ] Create course detail page (list tutorials)
-* [ ] Create tutorial page (list exercises)
-* [ ] Only show active/unlocked exercises
-* [ ] Create exercise detail page
+* [x] Create course list page
+* [x] Create course detail page (list tutorials)
+* [x] Create tutorial page (list exercises)
+* [x] Only show active/unlocked exercises
+* [x] Create exercise detail page
+
+---
+
+## Phase 4a — Development seed data
+
+- [x] Add a Django management command to create demo data
+- [x] Create one demo course
+- [x] Create two demo tutorials
+- [x] Create several demo exercises
+- [x] Include both numerical and upload-type exercises
+- [x] Include exercise variants with reference solutions, tolerance, and points
+- [x] Ensure the command can be run repeatedly without duplicating data
 
 ---
 
 ## Phase 5 — Numerical exercises
 
-* [ ] Assign random variant per student (store it!)
-* [ ] Create submission form (numerical input)
-* [ ] Implement answer checking with tolerance
-* [ ] Store result (score, correctness, timestamp)
-* [ ] Show result to student after submission
+* [x] Assign random variant per student (store it!)
+* [x] Create submission form (numerical input)
+* [x] Implement answer checking with tolerance
+* [x] Store result (score, correctness, timestamp)
+* [x] Show result to student after submission
 
 ---
 
 ## Phase 6 — File upload exercises
 
-* [ ] Add file upload field to submission
-* [ ] Restrict file types and size
-* [ ] Store files securely (MEDIA_ROOT)
-* [ ] Link file to Result model
-* [ ] Allow student to upload/replace file
+* [x] Add file upload field to submission
+* [x] Restrict file types and size
+* [x] Store files securely (MEDIA_ROOT)
+* [x] Link file to Result model
+* [x] Allow student to upload/replace file
 
 ---
 
 ## Phase 7 — Supervisor grading & review
 
-* [ ] View submissions per exercise
-* [ ] Download uploaded files
-* [ ] Add manual grading interface
-* [ ] Store score + feedback
-* [ ] Mark submission as graded
+* [x] View submissions per exercise
+* [x] Download uploaded files
+* [x] Add manual grading interface
+* [x] Store score + feedback
+* [x] Mark submission as graded
 
 ---
 

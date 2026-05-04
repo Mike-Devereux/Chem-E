@@ -369,6 +369,11 @@ class Phase3SupervisorAdminTests(TestCase):
             password="test-password",
             role=User.Role.SUPERVISOR,
         )
+        self.supervisor_c = User.objects.create_user(
+            email="supervisor_c@unibas.ch",
+            password="test-password",
+            role=User.Role.SUPERVISOR,
+        )
         self.administrator = User.objects.create_user(
             email="administrator_admin@unibas.ch",
             password="test-password",
@@ -447,6 +452,14 @@ class Phase3SupervisorAdminTests(TestCase):
         self.assertEqual(change_response.status_code, 302)
         self.course_b.refresh_from_db()
         self.assertEqual(self.course_b.title, "Supervisor B Course Updated")
+
+    def test_shared_supervisor_can_access_shared_course_in_admin(self):
+        self.course_a.supervisors.add(self.supervisor_c)
+        self.client.force_login(self.supervisor_c)
+        list_response = self.client.get(reverse("admin:core_course_changelist"))
+        self.assertContains(list_response, "Supervisor A Course")
+        change_response = self.client.get(reverse("admin:core_course_change", args=[self.course_a.id]))
+        self.assertEqual(change_response.status_code, 200)
 
 
 class ExerciseVariantAssignmentTests(TestCase):
@@ -633,6 +646,9 @@ class NumericalAnswerFormViewTests(TestCase):
         self.assertTrue(result.is_correct)
         self.assertEqual(str(result.score), "2.00")
         self.assertIsNotNone(result.submitted_at)
+        self.assertTrue(result.is_manually_graded)
+        self.assertIsNotNone(result.graded_at)
+        self.assertIsNone(result.graded_by)
         self.assertEqual(result.assigned_variant.exercise, self.numerical_exercise)
 
     def test_second_submission_updates_existing_result(self):
@@ -670,6 +686,8 @@ class NumericalAnswerFormViewTests(TestCase):
         self.assertEqual(str(second_result.submitted_numerical_value), "10.0000")
         self.assertTrue(second_result.is_correct)
         self.assertEqual(str(second_result.score), "2.00")
+        self.assertTrue(second_result.is_manually_graded)
+        self.assertIsNotNone(second_result.graded_at)
 
     def test_revisit_shows_existing_submission_result(self):
         self.client.force_login(self.student)
@@ -916,12 +934,23 @@ class SupervisorExerciseSubmissionsViewTests(TestCase):
             password="test-password",
             role=User.Role.SUPERVISOR,
         )
+        self.shared_supervisor = User.objects.create_user(
+            email="shared_supervisor_submissions_view@unibas.ch",
+            password="test-password",
+            role=User.Role.SUPERVISOR,
+        )
+        self.unrelated_supervisor = User.objects.create_user(
+            email="unrelated_supervisor_submissions_view@unibas.ch",
+            password="test-password",
+            role=User.Role.SUPERVISOR,
+        )
         self.administrator = User.objects.create_user(
             email="admin_submissions_view@unibas.ch",
             password="test-password",
             role=User.Role.ADMINISTRATOR,
         )
         self.course = Course.objects.create(title="Submissions Course", created_by=self.supervisor)
+        self.course.supervisors.add(self.shared_supervisor)
         self.tutorial = Tutorial.objects.create(course=self.course, title="Week 1", order_index=1)
         self.exercise = Exercise.objects.create(
             tutorial=self.tutorial,
@@ -963,8 +992,13 @@ class SupervisorExerciseSubmissionsViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Submissions for Submission Exercise")
         self.assertContains(response, self.student.email)
-        self.assertContains(response, "Yes")
+        self.assertContains(response, "Graded")
         self.assertContains(response, "3.00")
+        result = Result.objects.get(student=self.student, exercise=self.exercise, is_archived=False)
+        self.assertContains(
+            response,
+            reverse("supervisor_submission_detail", args=[result.id]),
+        )
 
     def test_administrator_can_access_supervisor_submissions_page(self):
         self.client.force_login(self.administrator)
@@ -972,6 +1006,28 @@ class SupervisorExerciseSubmissionsViewTests(TestCase):
             reverse("supervisor_exercise_submissions", args=[self.exercise.id])
         )
         self.assertEqual(response.status_code, 200)
+
+    def test_shared_supervisor_can_access_supervisor_submissions_page(self):
+        self.client.force_login(self.shared_supervisor)
+        response = self.client.get(
+            reverse("supervisor_exercise_submissions", args=[self.exercise.id])
+        )
+        self.assertEqual(response.status_code, 200)
+
+    def test_unrelated_supervisor_cannot_access_supervisor_submissions_page(self):
+        self.client.force_login(self.unrelated_supervisor)
+        response = self.client.get(
+            reverse("supervisor_exercise_submissions", args=[self.exercise.id])
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_supervisor_not_in_course_supervisors_is_denied_even_if_creator_field_matches(self):
+        self.course.supervisors.remove(self.supervisor)
+        self.client.force_login(self.supervisor)
+        response = self.client.get(
+            reverse("supervisor_exercise_submissions", args=[self.exercise.id])
+        )
+        self.assertEqual(response.status_code, 403)
 
     def test_supervisor_submission_detail_page_shows_required_fields(self):
         result = Result.objects.get(student=self.student, exercise=self.exercise, is_archived=False)
@@ -991,6 +1047,11 @@ class SupervisorExerciseSubmissionsViewTests(TestCase):
         self.assertContains(response, ".pdf")
         self.assertContains(response, "3.00")
         self.assertContains(response, "Well explained.")
+        self.assertContains(response, "Status: Graded")
+        self.assertContains(response, "Submitted numerical value: 1.0000")
+        self.assertContains(response, "Reference solution: 1.0000")
+        self.assertContains(response, "Tolerance: 0.1000")
+        self.assertContains(response, "Correctness: True")
 
     def test_student_cannot_access_supervisor_submission_detail(self):
         result = Result.objects.get(student=self.student, exercise=self.exercise, is_archived=False)
@@ -1007,6 +1068,162 @@ class SupervisorExerciseSubmissionsViewTests(TestCase):
             reverse("supervisor_submission_detail", args=[result.id])
         )
         self.assertEqual(response.status_code, 200)
+
+    def test_shared_supervisor_can_access_supervisor_submission_detail(self):
+        result = Result.objects.get(student=self.student, exercise=self.exercise, is_archived=False)
+        self.client.force_login(self.shared_supervisor)
+        response = self.client.get(
+            reverse("supervisor_submission_detail", args=[result.id])
+        )
+        self.assertEqual(response.status_code, 200)
+
+    def test_unrelated_supervisor_cannot_access_supervisor_submission_detail(self):
+        result = Result.objects.get(student=self.student, exercise=self.exercise, is_archived=False)
+        self.client.force_login(self.unrelated_supervisor)
+        response = self.client.get(
+            reverse("supervisor_submission_detail", args=[result.id])
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_unrelated_supervisor_cannot_submit_grading_form(self):
+        upload_exercise = Exercise.objects.create(
+            tutorial=self.tutorial,
+            title="Upload Unauthorized Grading Exercise",
+            order_index=8,
+            exercise_type=Exercise.ExerciseType.DOCUMENT_UPLOAD,
+        )
+        upload_variant = ExerciseVariant.objects.create(
+            exercise=upload_exercise,
+            exercise_text="Upload unauthorized grading report.",
+            available_points="4.00",
+        )
+        upload_result = Result.objects.create(
+            student=self.student,
+            course=self.course,
+            tutorial=self.tutorial,
+            exercise=upload_exercise,
+            assigned_variant=upload_variant,
+            uploaded_file=SimpleUploadedFile("unauthorized.pdf", b"content"),
+            is_manually_graded=False,
+            score="0.00",
+        )
+
+        self.client.force_login(self.unrelated_supervisor)
+        response = self.client.post(
+            reverse("supervisor_submission_detail", args=[upload_result.id]),
+            {"score": "3.00", "feedback": "Unauthorized grading attempt."},
+        )
+        self.assertEqual(response.status_code, 403)
+        upload_result.refresh_from_db()
+        self.assertFalse(upload_result.is_manually_graded)
+
+
+class SupervisorGradingWorkflowTests(TestCase):
+    def setUp(self):
+        self.student = User.objects.create_user(
+            email="workflow_student@unibas.ch",
+            password="test-password",
+            role=User.Role.STUDENT,
+        )
+        self.course_owner = User.objects.create_user(
+            email="workflow_owner@unibas.ch",
+            password="test-password",
+            role=User.Role.SUPERVISOR,
+        )
+        self.shared_supervisor = User.objects.create_user(
+            email="workflow_shared@unibas.ch",
+            password="test-password",
+            role=User.Role.SUPERVISOR,
+        )
+        # Keep compatibility with existing tests that use self.supervisor naming.
+        self.supervisor = self.shared_supervisor
+        self.unrelated_supervisor = User.objects.create_user(
+            email="workflow_unrelated@unibas.ch",
+            password="test-password",
+            role=User.Role.SUPERVISOR,
+        )
+        self.administrator = User.objects.create_user(
+            email="workflow_admin@unibas.ch",
+            password="test-password",
+            role=User.Role.ADMINISTRATOR,
+        )
+
+        self.course = Course.objects.create(
+            title="Workflow Course",
+            created_by=self.course_owner,
+        )
+        self.course.supervisors.add(self.shared_supervisor)
+        self.tutorial = Tutorial.objects.create(
+            course=self.course,
+            title="Workflow Tutorial",
+            order_index=1,
+        )
+        self.exercise = Exercise.objects.create(
+            tutorial=self.tutorial,
+            title="Workflow Upload Exercise",
+            order_index=1,
+            exercise_type=Exercise.ExerciseType.DOCUMENT_UPLOAD,
+        )
+        self.variant = ExerciseVariant.objects.create(
+            exercise=self.exercise,
+            exercise_text="Upload workflow report",
+            available_points="5.00",
+        )
+        self.result = Result.objects.create(
+            student=self.student,
+            course=self.course,
+            tutorial=self.tutorial,
+            exercise=self.exercise,
+            assigned_variant=self.variant,
+            uploaded_file=SimpleUploadedFile("workflow.pdf", b"workflow-content"),
+            score="0.00",
+            feedback="",
+            is_manually_graded=False,
+        )
+
+    def test_shared_supervisor_can_view_submissions_and_grade(self):
+        self.client.force_login(self.shared_supervisor)
+
+        list_response = self.client.get(
+            reverse("supervisor_exercise_submissions", args=[self.exercise.id])
+        )
+        self.assertEqual(list_response.status_code, 200)
+        self.assertContains(list_response, self.student.email)
+
+        grade_response = self.client.post(
+            reverse("supervisor_submission_detail", args=[self.result.id]),
+            {"score": "4.25", "feedback": "Solid submission."},
+        )
+        self.assertEqual(grade_response.status_code, 200)
+
+        self.result.refresh_from_db()
+        self.assertEqual(str(self.result.score), "4.25")
+        self.assertEqual(self.result.feedback, "Solid submission.")
+        self.assertTrue(self.result.is_manually_graded)
+        self.assertEqual(self.result.graded_by, self.shared_supervisor)
+        self.assertIsNotNone(self.result.graded_at)
+
+    def test_student_cannot_access_supervisor_pages(self):
+        self.client.force_login(self.student)
+        list_response = self.client.get(
+            reverse("supervisor_exercise_submissions", args=[self.exercise.id])
+        )
+        detail_response = self.client.get(
+            reverse("supervisor_submission_detail", args=[self.result.id])
+        )
+        self.assertEqual(list_response.status_code, 403)
+        self.assertEqual(detail_response.status_code, 403)
+
+    def test_unrelated_supervisor_cannot_access_course_submissions(self):
+        self.client.force_login(self.unrelated_supervisor)
+        list_response = self.client.get(
+            reverse("supervisor_exercise_submissions", args=[self.exercise.id])
+        )
+        detail_response = self.client.get(
+            reverse("supervisor_submission_detail", args=[self.result.id])
+        )
+        self.assertEqual(list_response.status_code, 403)
+        self.assertEqual(detail_response.status_code, 403)
 
     def test_supervisor_submission_detail_invalid_id_returns_404(self):
         self.client.force_login(self.supervisor)
@@ -1059,8 +1276,29 @@ class SupervisorExerciseSubmissionsViewTests(TestCase):
 
     def test_manual_grading_form_visible_only_for_upload_type_submission(self):
         # Numerical exercise result should not show upload grading form.
-        numerical_result = Result.objects.get(
-            student=self.student, exercise=self.exercise, is_archived=False
+        numerical_exercise = Exercise.objects.create(
+            tutorial=self.tutorial,
+            title="Workflow Numerical Exercise",
+            order_index=9,
+            exercise_type=Exercise.ExerciseType.NUMERICAL,
+        )
+        numerical_variant = ExerciseVariant.objects.create(
+            exercise=numerical_exercise,
+            exercise_text="Workflow numerical variant.",
+            reference_solution="2.0000",
+            absolute_tolerance="0.1000",
+            available_points="2.00",
+        )
+        numerical_result = Result.objects.create(
+            student=self.student,
+            course=self.course,
+            tutorial=self.tutorial,
+            exercise=numerical_exercise,
+            assigned_variant=numerical_variant,
+            submitted_numerical_value="2.0000",
+            score="2.00",
+            is_correct=True,
+            is_manually_graded=True,
         )
         self.client.force_login(self.supervisor)
         numerical_response = self.client.get(
@@ -1157,9 +1395,153 @@ class SupervisorExerciseSubmissionsViewTests(TestCase):
             {"score": "4.75", "feedback": "Good work overall."},
         )
         self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Status: Graded")
+        self.assertEqual(
+            Result.objects.filter(student=self.student, exercise=upload_exercise, is_archived=False).count(),
+            1,
+        )
         upload_result.refresh_from_db()
         self.assertEqual(str(upload_result.score), "4.75")
         self.assertEqual(upload_result.feedback, "Good work overall.")
         self.assertTrue(upload_result.is_manually_graded)
         self.assertEqual(upload_result.graded_by, self.supervisor)
         self.assertIsNotNone(upload_result.graded_at)
+
+    def test_submissions_list_shows_ungraded_and_graded_status(self):
+        upload_exercise = Exercise.objects.create(
+            tutorial=self.tutorial,
+            title="Upload Status Exercise",
+            order_index=6,
+            exercise_type=Exercise.ExerciseType.DOCUMENT_UPLOAD,
+        )
+        upload_variant = ExerciseVariant.objects.create(
+            exercise=upload_exercise,
+            exercise_text="Upload status report.",
+            available_points="3.00",
+        )
+        upload_result = Result.objects.create(
+            student=self.student,
+            course=self.course,
+            tutorial=self.tutorial,
+            exercise=upload_exercise,
+            assigned_variant=upload_variant,
+            uploaded_file=SimpleUploadedFile("status.pdf", b"content"),
+            is_manually_graded=False,
+            score="0.00",
+        )
+
+        self.client.force_login(self.supervisor)
+        ungraded_response = self.client.get(
+            reverse("supervisor_exercise_submissions", args=[upload_exercise.id])
+        )
+        self.assertContains(ungraded_response, "Ungraded")
+
+        upload_result.is_manually_graded = True
+        upload_result.score = "2.50"
+        upload_result.save(update_fields=["is_manually_graded", "score"])
+        graded_response = self.client.get(
+            reverse("supervisor_exercise_submissions", args=[upload_exercise.id])
+        )
+        self.assertContains(graded_response, "Graded")
+
+    def test_submissions_list_filters_graded_vs_ungraded(self):
+        upload_exercise = Exercise.objects.create(
+            tutorial=self.tutorial,
+            title="Upload Filter Exercise",
+            order_index=7,
+            exercise_type=Exercise.ExerciseType.DOCUMENT_UPLOAD,
+        )
+        upload_variant = ExerciseVariant.objects.create(
+            exercise=upload_exercise,
+            exercise_text="Upload filter report.",
+            available_points="3.00",
+        )
+        graded_student = User.objects.create_user(
+            email="graded_filter_student@unibas.ch",
+            password="test-password",
+            role=User.Role.STUDENT,
+        )
+        ungraded_student = User.objects.create_user(
+            email="ungraded_filter_student@unibas.ch",
+            password="test-password",
+            role=User.Role.STUDENT,
+        )
+        Result.objects.create(
+            student=graded_student,
+            course=self.course,
+            tutorial=self.tutorial,
+            exercise=upload_exercise,
+            assigned_variant=upload_variant,
+            uploaded_file=SimpleUploadedFile("graded-filter.pdf", b"content"),
+            is_manually_graded=True,
+            score="2.00",
+        )
+        Result.objects.create(
+            student=ungraded_student,
+            course=self.course,
+            tutorial=self.tutorial,
+            exercise=upload_exercise,
+            assigned_variant=upload_variant,
+            uploaded_file=SimpleUploadedFile("ungraded-filter.pdf", b"content"),
+            is_manually_graded=False,
+            score="0.00",
+        )
+
+        self.client.force_login(self.supervisor)
+        graded_response = self.client.get(
+            reverse("supervisor_exercise_submissions", args=[upload_exercise.id]) + "?status=graded"
+        )
+        self.assertContains(graded_response, "<td>graded_filter_student@unibas.ch</td>", html=True)
+        self.assertNotContains(
+            graded_response,
+            "<td>ungraded_filter_student@unibas.ch</td>",
+            html=True,
+        )
+
+        ungraded_response = self.client.get(
+            reverse("supervisor_exercise_submissions", args=[upload_exercise.id]) + "?status=ungraded"
+        )
+        self.assertContains(
+            ungraded_response,
+            "<td>ungraded_filter_student@unibas.ch</td>",
+            html=True,
+        )
+        self.assertNotContains(
+            ungraded_response,
+            "<td>graded_filter_student@unibas.ch</td>",
+            html=True,
+        )
+
+    def test_student_cannot_submit_manual_grading_form(self):
+        upload_exercise = Exercise.objects.create(
+            tutorial=self.tutorial,
+            title="Upload Student Grading Exercise",
+            order_index=5,
+            exercise_type=Exercise.ExerciseType.DOCUMENT_UPLOAD,
+        )
+        upload_variant = ExerciseVariant.objects.create(
+            exercise=upload_exercise,
+            exercise_text="Upload student grading report.",
+            available_points="6.00",
+        )
+        upload_result = Result.objects.create(
+            student=self.student,
+            course=self.course,
+            tutorial=self.tutorial,
+            exercise=upload_exercise,
+            assigned_variant=upload_variant,
+            uploaded_file=SimpleUploadedFile("student-grade.pdf", b"content"),
+            score="0.00",
+            is_manually_graded=False,
+        )
+
+        self.client.force_login(self.student)
+        response = self.client.post(
+            reverse("supervisor_submission_detail", args=[upload_result.id]),
+            {"score": "5.00", "feedback": "Attempted unauthorized grade."},
+        )
+        self.assertEqual(response.status_code, 403)
+        upload_result.refresh_from_db()
+        self.assertEqual(str(upload_result.score), "0.00")
+        self.assertFalse(upload_result.is_manually_graded)
+        self.assertIsNone(upload_result.graded_by)

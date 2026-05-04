@@ -10,6 +10,13 @@
     <p>Student: {{ submission.student.email }}</p>
     <p>Exercise: {{ submission.exercise.title }}</p>
     <p>Assigned variant: {{ submission.assigned_variant.exercise_text }}</p>
+    <p>Status: {{ submission.is_manually_graded|yesno:"Graded,Ungraded" }}</p>
+    {% if submission.exercise.exercise_type == "numerical" %}
+        <p>Submitted numerical value: {{ submission.submitted_numerical_value|default:"-" }}</p>
+        <p>Reference solution: {{ submission.assigned_variant.reference_solution|default:"-" }}</p>
+        <p>Tolerance: {{ submission.assigned_variant.absolute_tolerance|default:"-" }}</p>
+        <p>Correctness: {{ submission.is_correct|default:"-" }}</p>
+    {% endif %}
 
     <p>
         Uploaded file:

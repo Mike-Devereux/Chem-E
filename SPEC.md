@@ -102,7 +102,8 @@ A course has:
 * description, optional;
 * active/inactive status;
 * creation timestamp;
-* creator/supervisor ID.
+* creator ID;
+* one or more assigned supervisors;
 
 ### 4.2 Tutorial / Session
 
