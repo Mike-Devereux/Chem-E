@@ -29,6 +29,11 @@
         </form>
         {% if submission_received %}
             <p>Answer received: {{ submitted_value }}</p>
+            {% if is_correct == True %}
+                <p>Result: Correct</p>
+            {% elif is_correct == False %}
+                <p>Result: Incorrect</p>
+            {% endif %}
         {% endif %}
     {% endif %}
 </body>

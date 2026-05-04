@@ -11,6 +11,7 @@ from .access import (
     administrator_required,
     supervisor_required,
 )
+from .grading import is_numerical_answer_correct
 from .models import Course, Exercise, ExerciseVariant, Result, Tutorial, User
 
 
@@ -585,3 +586,77 @@ class NumericalAnswerFormViewTests(TestCase):
         response = self.client.get(reverse("exercise_detail", args=[self.upload_exercise.id]))
         self.assertNotContains(response, "Submit numerical answer")
         self.assertNotIn("numerical_form", response.context)
+
+    def test_numerical_submission_stores_result_fields(self):
+        self.client.force_login(self.student)
+        response = self.client.post(
+            reverse("exercise_detail", args=[self.numerical_exercise.id]),
+            {"submitted_value": "10.02"},
+        )
+        self.assertEqual(response.status_code, 200)
+
+        result = Result.objects.get(
+            student=self.student,
+            exercise=self.numerical_exercise,
+            is_archived=False,
+        )
+        self.assertEqual(str(result.submitted_numerical_value), "10.0200")
+        self.assertTrue(result.is_correct)
+        self.assertEqual(str(result.score), "2.00")
+        self.assertIsNotNone(result.submitted_at)
+        self.assertEqual(result.assigned_variant.exercise, self.numerical_exercise)
+
+    def test_second_submission_updates_existing_result(self):
+        self.client.force_login(self.student)
+        self.client.post(
+            reverse("exercise_detail", args=[self.numerical_exercise.id]),
+            {"submitted_value": "9.00"},
+        )
+        first_result = Result.objects.get(
+            student=self.student,
+            exercise=self.numerical_exercise,
+            is_archived=False,
+        )
+
+        self.client.post(
+            reverse("exercise_detail", args=[self.numerical_exercise.id]),
+            {"submitted_value": "10.00"},
+        )
+        second_result = Result.objects.get(
+            student=self.student,
+            exercise=self.numerical_exercise,
+            is_archived=False,
+        )
+
+        self.assertEqual(
+            Result.objects.filter(
+                student=self.student,
+                exercise=self.numerical_exercise,
+                is_archived=False,
+            ).count(),
+            1,
+        )
+        self.assertEqual(first_result.id, second_result.id)
+        self.assertEqual(str(second_result.submitted_numerical_value), "10.0000")
+        self.assertTrue(second_result.is_correct)
+        self.assertEqual(str(second_result.score), "2.00")
+
+
+class NumericalCheckingTests(TestCase):
+    def test_correct_answer_within_tolerance(self):
+        self.assertTrue(
+            is_numerical_answer_correct(
+                submitted_value="10.04",
+                reference_solution="10.00",
+                absolute_tolerance="0.05",
+            )
+        )
+
+    def test_incorrect_answer_outside_tolerance(self):
+        self.assertFalse(
+            is_numerical_answer_correct(
+                submitted_value="10.10",
+                reference_solution="10.00",
+                absolute_tolerance="0.05",
+            )
+        )
