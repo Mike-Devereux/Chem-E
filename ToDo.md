@@ -25,13 +25,13 @@
 
 ## Phase 2 — Core data models
 
-* [ ] Create Course model
-* [ ] Create Tutorial model
-* [ ] Create Exercise model
-* [ ] Create ExerciseVariant model
-* [ ] Create Result (submission) model
-* [ ] Add relationships between models
-* [ ] Register all models in Django admin
+* [x] Create Course model
+* [x] Create Tutorial model
+* [x] Create Exercise model
+* [x] Create ExerciseVariant model
+* [x] Create Result (submission) model
+* [x] Add relationships between models
+* [x] Register all models in Django admin
 
 ---
 
@@ -39,16 +39,24 @@
 
 (Start with Django admin before building custom UI)
 
-* [ ] Allow supervisors to create courses in admin
-* [ ] Allow supervisors to create tutorials
-* [ ] Allow supervisors to create exercises
-* [ ] Allow supervisors to add exercise variants
-* [ ] Add fields:
+- [ ] Allow supervisors to access Django admin
+- [ ] Allow supervisors to create and edit their own courses
+- [ ] Allow supervisors to create and edit tutorials within their courses
+- [ ] Allow supervisors to create and edit exercises within tutorials
+- [ ] Allow supervisors to create and edit exercise variants within exercises
 
-  * [ ] exercise type (numerical / upload)
-  * [ ] tolerance
-  * [ ] points
-  * [ ] active/locked flag
+- [ ] Ensure the following fields are editable in admin:
+  - [ ] exercise type (numerical / upload) (Exercise)
+  - [ ] active/unlocked flag (Exercise)
+  - [ ] reference solution (ExerciseVariant)
+  - [ ] tolerance (ExerciseVariant)
+  - [ ] available points (ExerciseVariant)
+
+- [ ] Restrict supervisors to only see and edit their own content
+- [ ] Improve admin usability:
+  - [ ] inline editing (variants under exercises, etc.)
+  - [ ] list display fields
+  - [ ] filters and search
 
 ---
 

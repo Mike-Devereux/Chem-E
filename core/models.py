@@ -20,9 +20,12 @@ class UserManager(BaseUserManager):
         return user
 
     def create_user(self, email, password=None, **extra_fields):
-        extra_fields.setdefault("is_staff", False)
+        role = extra_fields.setdefault("role", User.Role.STUDENT)
+        if role in {User.Role.SUPERVISOR, User.Role.ADMINISTRATOR}:
+            extra_fields.setdefault("is_staff", True)
+        else:
+            extra_fields.setdefault("is_staff", False)
         extra_fields.setdefault("is_superuser", False)
-        extra_fields.setdefault("role", User.Role.STUDENT)
         return self._create_user(email, password, **extra_fields)
 
     def create_superuser(self, email, password, **extra_fields):
@@ -51,6 +54,16 @@ class User(AbstractUser):
     REQUIRED_FIELDS = []
 
     objects = UserManager()
+
+    def save(self, *args, **kwargs):
+        # Keep admin login eligibility aligned with role-based access.
+        if self.is_superuser:
+            self.is_staff = True
+        elif self.role in {self.Role.SUPERVISOR, self.Role.ADMINISTRATOR}:
+            self.is_staff = True
+        else:
+            self.is_staff = False
+        super().save(*args, **kwargs)
 
 
 class Course(models.Model):
