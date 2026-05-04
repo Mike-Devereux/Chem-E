@@ -1056,3 +1056,110 @@ class SupervisorExerciseSubmissionsViewTests(TestCase):
         with self.assertRaises(ValidationError) as ctx:
             result.full_clean()
         self.assertIn("uploaded_file", ctx.exception.message_dict)
+
+    def test_manual_grading_form_visible_only_for_upload_type_submission(self):
+        # Numerical exercise result should not show upload grading form.
+        numerical_result = Result.objects.get(
+            student=self.student, exercise=self.exercise, is_archived=False
+        )
+        self.client.force_login(self.supervisor)
+        numerical_response = self.client.get(
+            reverse("supervisor_submission_detail", args=[numerical_result.id])
+        )
+        self.assertNotContains(numerical_response, "Manual grading")
+
+        # Upload exercise result should show grading form.
+        upload_exercise = Exercise.objects.create(
+            tutorial=self.tutorial,
+            title="Upload Submission Exercise",
+            order_index=2,
+            exercise_type=Exercise.ExerciseType.DOCUMENT_UPLOAD,
+        )
+        upload_variant = ExerciseVariant.objects.create(
+            exercise=upload_exercise,
+            exercise_text="Upload your report.",
+            available_points="4.00",
+        )
+        upload_result = Result.objects.create(
+            student=self.student,
+            course=self.course,
+            tutorial=self.tutorial,
+            exercise=upload_exercise,
+            assigned_variant=upload_variant,
+            uploaded_file=SimpleUploadedFile("report.pdf", b"content"),
+            score="0.00",
+            is_manually_graded=False,
+        )
+        upload_response = self.client.get(
+            reverse("supervisor_submission_detail", args=[upload_result.id])
+        )
+        self.assertContains(upload_response, "Manual grading")
+        self.assertIn("grading_form", upload_response.context)
+
+    def test_manual_grading_form_prefills_existing_values_for_upload_submission(self):
+        upload_exercise = Exercise.objects.create(
+            tutorial=self.tutorial,
+            title="Upload Prefill Exercise",
+            order_index=3,
+            exercise_type=Exercise.ExerciseType.DOCUMENT_UPLOAD,
+        )
+        upload_variant = ExerciseVariant.objects.create(
+            exercise=upload_exercise,
+            exercise_text="Upload prefill report.",
+            available_points="5.00",
+        )
+        upload_result = Result.objects.create(
+            student=self.student,
+            course=self.course,
+            tutorial=self.tutorial,
+            exercise=upload_exercise,
+            assigned_variant=upload_variant,
+            uploaded_file=SimpleUploadedFile("prefill.pdf", b"content"),
+            score="2.50",
+            feedback="Needs clearer explanation.",
+            is_manually_graded=True,
+        )
+
+        self.client.force_login(self.supervisor)
+        response = self.client.get(
+            reverse("supervisor_submission_detail", args=[upload_result.id])
+        )
+        form = response.context["grading_form"]
+        self.assertEqual(str(form["score"].value()), "2.50")
+        self.assertEqual(form["feedback"].value(), "Needs clearer explanation.")
+
+    def test_manual_grading_form_saves_for_upload_submission(self):
+        upload_exercise = Exercise.objects.create(
+            tutorial=self.tutorial,
+            title="Upload Grading Exercise",
+            order_index=4,
+            exercise_type=Exercise.ExerciseType.DOCUMENT_UPLOAD,
+        )
+        upload_variant = ExerciseVariant.objects.create(
+            exercise=upload_exercise,
+            exercise_text="Upload grading report.",
+            available_points="6.00",
+        )
+        upload_result = Result.objects.create(
+            student=self.student,
+            course=self.course,
+            tutorial=self.tutorial,
+            exercise=upload_exercise,
+            assigned_variant=upload_variant,
+            uploaded_file=SimpleUploadedFile("grading.pdf", b"content"),
+            score="0.00",
+            is_manually_graded=False,
+        )
+
+        self.client.force_login(self.supervisor)
+        response = self.client.post(
+            reverse("supervisor_submission_detail", args=[upload_result.id]),
+            {"score": "4.75", "feedback": "Good work overall."},
+        )
+        self.assertEqual(response.status_code, 200)
+        upload_result.refresh_from_db()
+        self.assertEqual(str(upload_result.score), "4.75")
+        self.assertEqual(upload_result.feedback, "Good work overall.")
+        self.assertTrue(upload_result.is_manually_graded)
+        self.assertEqual(upload_result.graded_by, self.supervisor)
+        self.assertIsNotNone(upload_result.graded_at)

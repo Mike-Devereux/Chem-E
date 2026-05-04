@@ -24,3 +24,15 @@ class UploadSubmissionForm(forms.Form):
         label="Upload your solution file",
         validators=[validate_student_submission_file],
     )
+
+
+class ManualUploadGradingForm(forms.Form):
+    score = forms.DecimalField(
+        min_value=0,
+        max_digits=8,
+        decimal_places=2,
+    )
+    feedback = forms.CharField(
+        required=False,
+        widget=forms.Textarea(attrs={"rows": 3}),
+    )

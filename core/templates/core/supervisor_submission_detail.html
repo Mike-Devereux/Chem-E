@@ -26,5 +26,14 @@
     {% if submission.feedback %}
         <p>Feedback: {{ submission.feedback }}</p>
     {% endif %}
+
+    {% if submission.exercise.exercise_type == "document_upload" %}
+        <h2>Manual grading</h2>
+        <form method="post">
+            {% csrf_token %}
+            {{ grading_form.as_p }}
+            <button type="submit">Save grading</button>
+        </form>
+    {% endif %}
 </body>
 </html>

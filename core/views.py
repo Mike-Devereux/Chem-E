@@ -13,7 +13,12 @@ from django.views import View
 from django.views.generic import CreateView, DetailView, ListView
 
 from .access import SupervisorRequiredMixin
-from .forms import NumericalAnswerForm, RegistrationForm, UploadSubmissionForm
+from .forms import (
+    ManualUploadGradingForm,
+    NumericalAnswerForm,
+    RegistrationForm,
+    UploadSubmissionForm,
+)
 from .grading import is_numerical_answer_correct
 from .models import Course, Exercise, Result, Tutorial, User
 
@@ -203,6 +208,42 @@ class SupervisorSubmissionDetailView(SupervisorRequiredMixin, DetailView):
     template_name = "core/supervisor_submission_detail.html"
     context_object_name = "submission"
     pk_url_kwarg = "result_id"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        if self.object.exercise.exercise_type == Exercise.ExerciseType.DOCUMENT_UPLOAD:
+            initial = {
+                "score": self.object.score,
+                "feedback": self.object.feedback,
+            }
+            context["grading_form"] = kwargs.get("grading_form") or ManualUploadGradingForm(
+                initial=initial
+            )
+        return context
+
+    def post(self, request, *args, **kwargs):
+        self.object = self.get_object()
+        if self.object.exercise.exercise_type != Exercise.ExerciseType.DOCUMENT_UPLOAD:
+            return self.render_to_response(self.get_context_data())
+
+        form = ManualUploadGradingForm(request.POST)
+        if form.is_valid():
+            self.object.score = form.cleaned_data["score"]
+            self.object.feedback = form.cleaned_data["feedback"]
+            self.object.is_manually_graded = True
+            self.object.graded_by = request.user
+            self.object.graded_at = timezone.now()
+            self.object.save(
+                update_fields=[
+                    "score",
+                    "feedback",
+                    "is_manually_graded",
+                    "graded_by",
+                    "graded_at",
+                ]
+            )
+            return self.render_to_response(self.get_context_data())
+        return self.render_to_response(self.get_context_data(grading_form=form))
 
 
 class SupervisorSubmissionFileDownloadView(SupervisorRequiredMixin, View):
