@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ tutorial.title }}</title>
+</head>
+<body>
+    <p><a href="{% url 'course_detail' tutorial.course_id %}">Back to course</a></p>
+    <h1>{{ tutorial.title }}</h1>
+    {% if tutorial.description %}
+        <p>{{ tutorial.description }}</p>
+    {% endif %}
+
+    <h2>Exercises</h2>
+    {% if exercises %}
+        <ul>
+            {% for exercise in exercises %}
+                <li>
+                    <a href="{% url 'exercise_detail' exercise.pk %}">{{ exercise.title }}</a>
+                </li>
+            {% endfor %}
+        </ul>
+    {% else %}
+        <p>No exercises available for this tutorial.</p>
+    {% endif %}
+</body>
+</html>

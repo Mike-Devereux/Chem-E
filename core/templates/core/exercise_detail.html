@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ exercise.title }}</title>
+</head>
+<body>
+    <p><a href="{% url 'tutorial_detail' exercise.tutorial_id %}">Back to tutorial</a></p>
+    <h1>{{ exercise.title }}</h1>
+
+    {% if variant %}
+        <div>
+            <p>{{ variant.exercise_text }}</p>
+            {% if variant.image %}
+                <img src="{{ variant.image.url }}" alt="Exercise variant image">
+            {% endif %}
+        </div>
+    {% else %}
+        <p>No exercise variant available yet.</p>
+    {% endif %}
+
+    {% if exercise.exercise_type == "numerical" %}
+        <h2>Submit numerical answer</h2>
+        <form method="post">
+            {% csrf_token %}
+            {{ numerical_form.as_p }}
+            <button type="submit">Submit</button>
+        </form>
+        {% if submission_received %}
+            <p>Answer received: {{ submitted_value }}</p>
+        {% endif %}
+    {% endif %}
+</body>
+</html>

@@ -1,9 +1,11 @@
+import random
+
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.urls import reverse_lazy
 from django.views.generic import CreateView, DetailView, ListView
 
-from .forms import RegistrationForm
-from .models import Course, Exercise, Tutorial
+from .forms import NumericalAnswerForm, RegistrationForm
+from .models import Course, Exercise, Result, Tutorial, User
 
 
 class CourseListView(LoginRequiredMixin, ListView):
@@ -46,8 +48,47 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context["variant"] = self.object.variants.order_by("id").first()
+        if self.request.user.role == User.Role.STUDENT:
+            context["variant"] = self._get_or_assign_student_variant()
+        else:
+            context["variant"] = self.object.variants.order_by("id").first()
+        if self.object.exercise_type == Exercise.ExerciseType.NUMERICAL:
+            context["numerical_form"] = kwargs.get("numerical_form") or NumericalAnswerForm()
         return context
+
+    def _get_or_assign_student_variant(self):
+        variants = list(self.object.variants.order_by("id"))
+        if not variants:
+            return None
+
+        result, created = Result.objects.get_or_create(
+            student=self.request.user,
+            exercise=self.object,
+            is_archived=False,
+            defaults={
+                "course": self.object.tutorial.course,
+                "tutorial": self.object.tutorial,
+                "assigned_variant": random.choice(variants),
+            },
+        )
+        if created:
+            return result.assigned_variant
+        return result.assigned_variant
+
+    def post(self, request, *args, **kwargs):
+        self.object = self.get_object()
+        if self.object.exercise_type != Exercise.ExerciseType.NUMERICAL:
+            return self.render_to_response(self.get_context_data())
+
+        form = NumericalAnswerForm(request.POST)
+        if form.is_valid():
+            context = self.get_context_data(
+                numerical_form=NumericalAnswerForm(),
+                submission_received=True,
+                submitted_value=form.cleaned_data["submitted_value"],
+            )
+            return self.render_to_response(context)
+        return self.render_to_response(self.get_context_data(numerical_form=form))
 
 
 class RegisterView(CreateView):

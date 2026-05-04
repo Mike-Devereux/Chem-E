@@ -442,3 +442,146 @@ class Phase3SupervisorAdminTests(TestCase):
         self.assertEqual(change_response.status_code, 302)
         self.course_b.refresh_from_db()
         self.assertEqual(self.course_b.title, "Supervisor B Course Updated")
+
+
+class ExerciseVariantAssignmentTests(TestCase):
+    def setUp(self):
+        self.supervisor = User.objects.create_user(
+            email="supervisor_variant@unibas.ch",
+            password="test-password",
+            role=User.Role.SUPERVISOR,
+        )
+        self.student = User.objects.create_user(
+            email="student_variant@unibas.ch",
+            password="test-password",
+            role=User.Role.STUDENT,
+        )
+        self.course = Course.objects.create(title="Variant Course", created_by=self.supervisor)
+        self.tutorial = Tutorial.objects.create(
+            course=self.course,
+            title="Variant Tutorial",
+            order_index=1,
+        )
+        self.exercise = Exercise.objects.create(
+            tutorial=self.tutorial,
+            title="Variant Exercise",
+            order_index=1,
+            exercise_type=Exercise.ExerciseType.NUMERICAL,
+            is_active=True,
+        )
+        self.variant_a = ExerciseVariant.objects.create(
+            exercise=self.exercise,
+            exercise_text="Variant A text",
+            reference_solution="1.0000",
+            absolute_tolerance="0.1000",
+            available_points="1.00",
+        )
+        self.variant_b = ExerciseVariant.objects.create(
+            exercise=self.exercise,
+            exercise_text="Variant B text",
+            reference_solution="2.0000",
+            absolute_tolerance="0.1000",
+            available_points="1.00",
+        )
+
+    def test_first_access_assigns_random_variant_and_stores_result(self):
+        self.client.force_login(self.student)
+        response = self.client.get(reverse("exercise_detail", args=[self.exercise.id]))
+        self.assertEqual(response.status_code, 200)
+
+        result = Result.objects.get(student=self.student, exercise=self.exercise, is_archived=False)
+        self.assertIn(result.assigned_variant_id, [self.variant_a.id, self.variant_b.id])
+        self.assertEqual(response.context["variant"].id, result.assigned_variant_id)
+
+    def test_revisit_keeps_same_assigned_variant(self):
+        self.client.force_login(self.student)
+        self.client.get(reverse("exercise_detail", args=[self.exercise.id]))
+        first_result = Result.objects.get(
+            student=self.student,
+            exercise=self.exercise,
+            is_archived=False,
+        )
+
+        second_response = self.client.get(reverse("exercise_detail", args=[self.exercise.id]))
+        self.assertEqual(second_response.status_code, 200)
+
+        second_result = Result.objects.get(
+            student=self.student,
+            exercise=self.exercise,
+            is_archived=False,
+        )
+        self.assertEqual(Result.objects.filter(student=self.student, exercise=self.exercise).count(), 1)
+        self.assertEqual(first_result.assigned_variant_id, second_result.assigned_variant_id)
+        self.assertEqual(second_response.context["variant"].id, second_result.assigned_variant_id)
+
+
+class NumericalAnswerFormViewTests(TestCase):
+    def setUp(self):
+        self.supervisor = User.objects.create_user(
+            email="supervisor_form@unibas.ch",
+            password="test-password",
+            role=User.Role.SUPERVISOR,
+        )
+        self.student = User.objects.create_user(
+            email="student_form@unibas.ch",
+            password="test-password",
+            role=User.Role.STUDENT,
+        )
+        self.course = Course.objects.create(title="Form Course", created_by=self.supervisor)
+        self.tutorial = Tutorial.objects.create(course=self.course, title="Form Tutorial", order_index=1)
+        self.numerical_exercise = Exercise.objects.create(
+            tutorial=self.tutorial,
+            title="Numerical Form Exercise",
+            order_index=1,
+            exercise_type=Exercise.ExerciseType.NUMERICAL,
+        )
+        self.upload_exercise = Exercise.objects.create(
+            tutorial=self.tutorial,
+            title="Upload Form Exercise",
+            order_index=2,
+            exercise_type=Exercise.ExerciseType.DOCUMENT_UPLOAD,
+        )
+        ExerciseVariant.objects.create(
+            exercise=self.numerical_exercise,
+            exercise_text="Enter a number.",
+            reference_solution="10.0000",
+            absolute_tolerance="0.1000",
+            available_points="2.00",
+        )
+        ExerciseVariant.objects.create(
+            exercise=self.upload_exercise,
+            exercise_text="Upload a file.",
+            available_points="2.00",
+        )
+
+    def test_numerical_exercise_shows_form_and_accepts_numeric_input(self):
+        self.client.force_login(self.student)
+        response = self.client.get(reverse("exercise_detail", args=[self.numerical_exercise.id]))
+        self.assertContains(response, "Submit numerical answer")
+        self.assertIn("numerical_form", response.context)
+
+        post_response = self.client.post(
+            reverse("exercise_detail", args=[self.numerical_exercise.id]),
+            {"submitted_value": "12.34"},
+        )
+        self.assertEqual(post_response.status_code, 200)
+        self.assertContains(post_response, "Answer received")
+
+    def test_numerical_exercise_rejects_non_numeric_input(self):
+        self.client.force_login(self.student)
+        response = self.client.post(
+            reverse("exercise_detail", args=[self.numerical_exercise.id]),
+            {"submitted_value": "not-a-number"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertFormError(
+            response.context["numerical_form"],
+            "submitted_value",
+            "Enter a number.",
+        )
+
+    def test_upload_exercise_does_not_show_numerical_form(self):
+        self.client.force_login(self.student)
+        response = self.client.get(reverse("exercise_detail", args=[self.upload_exercise.id]))
+        self.assertNotContains(response, "Submit numerical answer")
+        self.assertNotIn("numerical_form", response.context)
