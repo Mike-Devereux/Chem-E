@@ -6,6 +6,9 @@ from .views import (
     CourseListView,
     ExerciseDetailView,
     RegisterView,
+    SupervisorSubmissionFileDownloadView,
+    SupervisorSubmissionDetailView,
+    SupervisorExerciseSubmissionsView,
     TutorialDetailView,
 )
 
@@ -14,6 +17,21 @@ urlpatterns = [
     path("courses/<int:pk>/", CourseDetailView.as_view(), name="course_detail"),
     path("tutorials/<int:pk>/", TutorialDetailView.as_view(), name="tutorial_detail"),
     path("exercises/<int:pk>/", ExerciseDetailView.as_view(), name="exercise_detail"),
+    path(
+        "supervisor/exercises/<int:exercise_id>/submissions/",
+        SupervisorExerciseSubmissionsView.as_view(),
+        name="supervisor_exercise_submissions",
+    ),
+    path(
+        "supervisor/submissions/<int:result_id>/",
+        SupervisorSubmissionDetailView.as_view(),
+        name="supervisor_submission_detail",
+    ),
+    path(
+        "supervisor/submissions/<int:result_id>/file/",
+        SupervisorSubmissionFileDownloadView.as_view(),
+        name="supervisor_submission_file_download",
+    ),
     path("register/", RegisterView.as_view(), name="register"),
     path("login/", auth_views.LoginView.as_view(), name="login"),
     path("logout/", auth_views.LogoutView.as_view(next_page="/login/"), name="logout"),

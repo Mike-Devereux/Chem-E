@@ -903,6 +903,142 @@ class StudentUploadValidationTests(TestCase):
             result.full_clean()
         self.assertIn("uploaded_file", ctx.exception.message_dict)
 
+
+class SupervisorExerciseSubmissionsViewTests(TestCase):
+    def setUp(self):
+        self.student = User.objects.create_user(
+            email="student_submissions_view@unibas.ch",
+            password="test-password",
+            role=User.Role.STUDENT,
+        )
+        self.supervisor = User.objects.create_user(
+            email="supervisor_submissions_view@unibas.ch",
+            password="test-password",
+            role=User.Role.SUPERVISOR,
+        )
+        self.administrator = User.objects.create_user(
+            email="admin_submissions_view@unibas.ch",
+            password="test-password",
+            role=User.Role.ADMINISTRATOR,
+        )
+        self.course = Course.objects.create(title="Submissions Course", created_by=self.supervisor)
+        self.tutorial = Tutorial.objects.create(course=self.course, title="Week 1", order_index=1)
+        self.exercise = Exercise.objects.create(
+            tutorial=self.tutorial,
+            title="Submission Exercise",
+            order_index=1,
+            exercise_type=Exercise.ExerciseType.NUMERICAL,
+        )
+        self.variant = ExerciseVariant.objects.create(
+            exercise=self.exercise,
+            exercise_text="Solve question",
+            reference_solution="1.0000",
+            absolute_tolerance="0.1000",
+            available_points="3.00",
+        )
+        Result.objects.create(
+            student=self.student,
+            course=self.course,
+            tutorial=self.tutorial,
+            exercise=self.exercise,
+            assigned_variant=self.variant,
+            submitted_numerical_value="1.0000",
+            is_correct=True,
+            score="3.00",
+            is_manually_graded=True,
+        )
+
+    def test_student_cannot_access_supervisor_submissions_page(self):
+        self.client.force_login(self.student)
+        response = self.client.get(
+            reverse("supervisor_exercise_submissions", args=[self.exercise.id])
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_supervisor_can_access_and_see_submission_table(self):
+        self.client.force_login(self.supervisor)
+        response = self.client.get(
+            reverse("supervisor_exercise_submissions", args=[self.exercise.id])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Submissions for Submission Exercise")
+        self.assertContains(response, self.student.email)
+        self.assertContains(response, "Yes")
+        self.assertContains(response, "3.00")
+
+    def test_administrator_can_access_supervisor_submissions_page(self):
+        self.client.force_login(self.administrator)
+        response = self.client.get(
+            reverse("supervisor_exercise_submissions", args=[self.exercise.id])
+        )
+        self.assertEqual(response.status_code, 200)
+
+    def test_supervisor_submission_detail_page_shows_required_fields(self):
+        result = Result.objects.get(student=self.student, exercise=self.exercise, is_archived=False)
+        result.feedback = "Well explained."
+        result.uploaded_file = SimpleUploadedFile("answer.pdf", b"file-data")
+        result.save(update_fields=["feedback", "uploaded_file"])
+
+        self.client.force_login(self.supervisor)
+        response = self.client.get(
+            reverse("supervisor_submission_detail", args=[result.id])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, self.student.email)
+        self.assertContains(response, self.exercise.title)
+        self.assertContains(response, self.variant.exercise_text)
+        self.assertContains(response, "answer")
+        self.assertContains(response, ".pdf")
+        self.assertContains(response, "3.00")
+        self.assertContains(response, "Well explained.")
+
+    def test_student_cannot_access_supervisor_submission_detail(self):
+        result = Result.objects.get(student=self.student, exercise=self.exercise, is_archived=False)
+        self.client.force_login(self.student)
+        response = self.client.get(
+            reverse("supervisor_submission_detail", args=[result.id])
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_administrator_can_access_supervisor_submission_detail(self):
+        result = Result.objects.get(student=self.student, exercise=self.exercise, is_archived=False)
+        self.client.force_login(self.administrator)
+        response = self.client.get(
+            reverse("supervisor_submission_detail", args=[result.id])
+        )
+        self.assertEqual(response.status_code, 200)
+
+    def test_supervisor_submission_detail_invalid_id_returns_404(self):
+        self.client.force_login(self.supervisor)
+        response = self.client.get(
+            reverse("supervisor_submission_detail", args=[999999])
+        )
+        self.assertEqual(response.status_code, 404)
+
+    def test_supervisor_can_download_uploaded_file_from_submission(self):
+        result = Result.objects.get(student=self.student, exercise=self.exercise, is_archived=False)
+        result.uploaded_file = SimpleUploadedFile("download.pdf", b"download-content")
+        result.save(update_fields=["uploaded_file"])
+
+        self.client.force_login(self.supervisor)
+        response = self.client.get(
+            reverse("supervisor_submission_file_download", args=[result.id])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("attachment;", response["Content-Disposition"])
+        self.assertIn(".pdf", response["Content-Disposition"])
+
+    def test_student_cannot_download_uploaded_file_from_submission(self):
+        result = Result.objects.get(student=self.student, exercise=self.exercise, is_archived=False)
+        result.uploaded_file = SimpleUploadedFile("private.pdf", b"private-content")
+        result.save(update_fields=["uploaded_file"])
+
+        self.client.force_login(self.student)
+        response = self.client.get(
+            reverse("supervisor_submission_file_download", args=[result.id])
+        )
+        self.assertEqual(response.status_code, 403)
+
     def test_rejects_file_larger_than_20_mb(self):
         uploaded_file = SimpleUploadedFile(
             "solution.pdf",

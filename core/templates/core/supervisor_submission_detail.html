@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Submission Detail</title>
+</head>
+<body>
+    <h1>Submission Detail</h1>
+    <p>Student: {{ submission.student.email }}</p>
+    <p>Exercise: {{ submission.exercise.title }}</p>
+    <p>Assigned variant: {{ submission.assigned_variant.exercise_text }}</p>
+
+    <p>
+        Uploaded file:
+        {% if submission.uploaded_file %}
+            <a href="{% url 'supervisor_submission_file_download' submission.id %}">
+                {{ submission.uploaded_file.name }}
+            </a>
+        {% else %}
+            -
+        {% endif %}
+    </p>
+
+    <p>Score: {{ submission.score }}</p>
+    {% if submission.feedback %}
+        <p>Feedback: {{ submission.feedback }}</p>
+    {% endif %}
+</body>
+</html>

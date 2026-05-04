@@ -1,13 +1,18 @@
 import random
+import os
 from decimal import Decimal
 
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.files.storage import default_storage
 from django.db import IntegrityError
+from django.http import FileResponse, Http404
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.urls import reverse_lazy
+from django.views import View
 from django.views.generic import CreateView, DetailView, ListView
 
+from .access import SupervisorRequiredMixin
 from .forms import NumericalAnswerForm, RegistrationForm, UploadSubmissionForm
 from .grading import is_numerical_answer_correct
 from .models import Course, Exercise, Result, Tutorial, User
@@ -177,6 +182,39 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
             )
             return self.render_to_response(context)
         return self.render_to_response(self.get_context_data(numerical_form=form))
+
+
+class SupervisorExerciseSubmissionsView(SupervisorRequiredMixin, DetailView):
+    model = Exercise
+    template_name = "core/supervisor_exercise_submissions.html"
+    context_object_name = "exercise"
+    pk_url_kwarg = "exercise_id"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["submissions"] = Result.objects.filter(exercise=self.object).select_related(
+            "student"
+        ).order_by("-submitted_at", "-id")
+        return context
+
+
+class SupervisorSubmissionDetailView(SupervisorRequiredMixin, DetailView):
+    model = Result
+    template_name = "core/supervisor_submission_detail.html"
+    context_object_name = "submission"
+    pk_url_kwarg = "result_id"
+
+
+class SupervisorSubmissionFileDownloadView(SupervisorRequiredMixin, View):
+    def get(self, request, result_id):
+        submission = get_object_or_404(Result, pk=result_id)
+        if not submission.uploaded_file:
+            raise Http404("No uploaded file for this submission.")
+        return FileResponse(
+            submission.uploaded_file.open("rb"),
+            as_attachment=True,
+            filename=os.path.basename(submission.uploaded_file.name),
+        )
 
 
 class RegisterView(CreateView):
