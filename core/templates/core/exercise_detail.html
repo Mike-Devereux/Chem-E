@@ -27,13 +27,11 @@
             {{ numerical_form.as_p }}
             <button type="submit">Submit</button>
         </form>
-        {% if submission_received %}
-            <p>Answer received: {{ submitted_value }}</p>
-            {% if is_correct == True %}
-                <p>Result: Correct</p>
-            {% elif is_correct == False %}
-                <p>Result: Incorrect</p>
-            {% endif %}
+        {% if existing_result %}
+            <h2>Your latest result</h2>
+            <p>Submitted value: {{ existing_result.submitted_numerical_value }}</p>
+            <p>Correct: {{ existing_result.is_correct }}</p>
+            <p>Score: {{ existing_result.score }}</p>
         {% endif %}
     {% endif %}
 </body>

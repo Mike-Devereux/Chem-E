@@ -2,6 +2,7 @@ import random
 from decimal import Decimal
 
 from django.contrib.auth.mixins import LoginRequiredMixin
+from django.db import IntegrityError
 from django.utils import timezone
 from django.urls import reverse_lazy
 from django.views.generic import CreateView, DetailView, ListView
@@ -54,6 +55,9 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
         if self.request.user.role == User.Role.STUDENT:
             result = self._get_or_assign_student_result()
             context["variant"] = result.assigned_variant if result else None
+            context["existing_result"] = (
+                result if result and result.submitted_numerical_value is not None else None
+            )
         else:
             context["variant"] = self.object.variants.order_by("id").first()
         if self.object.exercise_type == Exercise.ExerciseType.NUMERICAL:
@@ -65,16 +69,24 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
         if not variants:
             return None
 
-        result, _ = Result.objects.get_or_create(
-            student=self.request.user,
-            exercise=self.object,
-            is_archived=False,
-            defaults={
-                "course": self.object.tutorial.course,
-                "tutorial": self.object.tutorial,
-                "assigned_variant": random.choice(variants),
-            },
-        )
+        try:
+            result, _ = Result.objects.get_or_create(
+                student=self.request.user,
+                exercise=self.object,
+                is_archived=False,
+                defaults={
+                    "course": self.object.tutorial.course,
+                    "tutorial": self.object.tutorial,
+                    "assigned_variant": random.choice(variants),
+                },
+            )
+        except IntegrityError:
+            # If two requests race, reuse the row created by the winner.
+            result = Result.objects.get(
+                student=self.request.user,
+                exercise=self.object,
+                is_archived=False,
+            )
         return result
 
     def post(self, request, *args, **kwargs):
@@ -116,9 +128,6 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
                 )
             context = self.get_context_data(
                 numerical_form=NumericalAnswerForm(),
-                submission_received=True,
-                submitted_value=form.cleaned_data["submitted_value"],
-                is_correct=is_correct,
             )
             return self.render_to_response(context)
         return self.render_to_response(self.get_context_data(numerical_form=form))

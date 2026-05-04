@@ -515,6 +515,28 @@ class ExerciseVariantAssignmentTests(TestCase):
         self.assertEqual(first_result.assigned_variant_id, second_result.assigned_variant_id)
         self.assertEqual(second_response.context["variant"].id, second_result.assigned_variant_id)
 
+    def test_variant_is_stable_on_multiple_page_reloads(self):
+        self.client.force_login(self.student)
+        first_response = self.client.get(reverse("exercise_detail", args=[self.exercise.id]))
+        second_response = self.client.get(reverse("exercise_detail", args=[self.exercise.id]))
+        third_response = self.client.get(reverse("exercise_detail", args=[self.exercise.id]))
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 200)
+        self.assertEqual(third_response.status_code, 200)
+
+        variant_id = first_response.context["variant"].id
+        self.assertEqual(second_response.context["variant"].id, variant_id)
+        self.assertEqual(third_response.context["variant"].id, variant_id)
+        self.assertEqual(
+            Result.objects.filter(
+                student=self.student,
+                exercise=self.exercise,
+                is_archived=False,
+            ).count(),
+            1,
+        )
+
 
 class NumericalAnswerFormViewTests(TestCase):
     def setUp(self):
@@ -566,7 +588,8 @@ class NumericalAnswerFormViewTests(TestCase):
             {"submitted_value": "12.34"},
         )
         self.assertEqual(post_response.status_code, 200)
-        self.assertContains(post_response, "Answer received")
+        self.assertContains(post_response, "Your latest result")
+        self.assertContains(post_response, "Submitted value: 12.3400")
 
     def test_numerical_exercise_rejects_non_numeric_input(self):
         self.client.force_login(self.student)
@@ -637,9 +660,25 @@ class NumericalAnswerFormViewTests(TestCase):
             1,
         )
         self.assertEqual(first_result.id, second_result.id)
+        self.assertEqual(first_result.assigned_variant_id, second_result.assigned_variant_id)
         self.assertEqual(str(second_result.submitted_numerical_value), "10.0000")
         self.assertTrue(second_result.is_correct)
         self.assertEqual(str(second_result.score), "2.00")
+
+    def test_revisit_shows_existing_submission_result(self):
+        self.client.force_login(self.student)
+        self.client.post(
+            reverse("exercise_detail", args=[self.numerical_exercise.id]),
+            {"submitted_value": "10.00"},
+        )
+        revisit_response = self.client.get(
+            reverse("exercise_detail", args=[self.numerical_exercise.id])
+        )
+        self.assertEqual(revisit_response.status_code, 200)
+        self.assertContains(revisit_response, "Your latest result")
+        self.assertContains(revisit_response, "Submitted value: 10.0000")
+        self.assertContains(revisit_response, "Correct: True")
+        self.assertContains(revisit_response, "Score: 2.00")
 
 
 class NumericalCheckingTests(TestCase):
