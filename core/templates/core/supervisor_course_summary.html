@@ -4,9 +4,40 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Course Summary - {{ course.title }}</title>
+    <style>
+        .cell-missing { color: #b00020; }
+        .cell-ungraded { color: #9c6b00; }
+        .cell-graded { color: #0b6b2f; }
+    </style>
 </head>
 <body>
     <h1>Course summary: {{ course.title }}</h1>
+    <form method="get">
+        <label for="tutorial_id">Tutorial:</label>
+        <select name="tutorial_id" id="tutorial_id">
+            <option value="">All tutorials</option>
+            {% for tutorial in tutorials %}
+                <option value="{{ tutorial.id }}"{% if selected_tutorial_id == tutorial.id|stringformat:"s" %} selected{% endif %}>
+                    {{ tutorial.title }}
+                </option>
+            {% endfor %}
+        </select>
+        <label for="student_id">Student:</label>
+        <select name="student_id" id="student_id">
+            <option value="">All students</option>
+            {% for student in all_students %}
+                <option value="{{ student.id }}"{% if selected_student_id == student.id|stringformat:"s" %} selected{% endif %}>
+                    {{ student.email }}
+                </option>
+            {% endfor %}
+        </select>
+        <button type="submit">Apply</button>
+    </form>
+    <p>
+        <span class="cell-missing">- = No submission</span> |
+        <span class="cell-ungraded">Ungraded submission</span> |
+        <span class="cell-graded">Score = Graded submission</span>
+    </p>
     <table border="1" cellpadding="4" cellspacing="0">
         <thead>
             <tr>
@@ -21,19 +52,17 @@
                 <tr>
                     <th>{{ row.student.email }}</th>
                     {% for result in row.cells %}
-                        <td>
-                            {% if result %}
-                                {% if result.is_manually_graded %}
-                                    {{ result.score }}
-                                {% elif result.uploaded_file or result.submitted_numerical_value is not None %}
-                                    Ungraded
-                                {% else %}
-                                    -
-                                {% endif %}
+                        {% if result %}
+                            {% if result.is_manually_graded %}
+                                <td class="cell-graded">{{ result.score }}</td>
+                            {% elif result.uploaded_file or result.submitted_numerical_value is not None %}
+                                <td class="cell-ungraded">Ungraded</td>
                             {% else %}
-                                -
+                                <td class="cell-missing">-</td>
                             {% endif %}
-                        </td>
+                        {% else %}
+                            <td class="cell-missing">-</td>
+                        {% endif %}
                     {% endfor %}
                 </tr>
             {% endfor %}
