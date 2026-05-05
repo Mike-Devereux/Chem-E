@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.db.models import Q
 
-from .models import Course, Exercise, ExerciseVariant, Result, Tutorial, User
+from .models import ArchiveBatch, Course, Exercise, ExerciseVariant, Result, Tutorial, User
 
 
 class SupervisorOwnedContentAdmin(admin.ModelAdmin):
@@ -268,6 +268,7 @@ class ResultAdmin(admin.ModelAdmin):
         "score",
         "is_correct",
         "is_manually_graded",
+        "archive_batch",
         "is_archived",
         "submitted_at",
         "graded_at",
@@ -279,7 +280,16 @@ class ResultAdmin(admin.ModelAdmin):
         "exercise__is_active",
         "is_correct",
         "is_manually_graded",
+        "archive_batch",
         "is_archived",
     )
     search_fields = ("student__email", "graded_by__email", "exercise__title", "tutorial__title", "course__title")
     ordering = ("-submitted_at",)
+
+
+@admin.register(ArchiveBatch)
+class ArchiveBatchAdmin(admin.ModelAdmin):
+    list_display = ("id", "course", "created_by", "created_at")
+    list_filter = ("course", "created_at")
+    search_fields = ("course__title", "created_by__email", "note")
+    ordering = ("-created_at", "-id")

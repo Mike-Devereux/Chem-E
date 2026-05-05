@@ -16,7 +16,7 @@ from .access import (
     supervisor_required,
 )
 from .grading import is_numerical_answer_correct
-from .models import Course, Exercise, ExerciseVariant, Result, Tutorial, User
+from .models import ArchiveBatch, Course, Exercise, ExerciseVariant, Result, Tutorial, User
 
 
 class UserEmailDomainValidationTests(TestCase):
@@ -1848,3 +1848,142 @@ class SupervisorCourseSummaryViewTests(TestCase):
 
         self.client.force_login(self.student_a)
         self.assertEqual(self.client.get(summary_url).status_code, 403)
+
+
+class SupervisorCourseArchiveResultsViewTests(TestCase):
+    def setUp(self):
+        self.owner_supervisor = User.objects.create_user(
+            email="archive_owner@unibas.ch",
+            password="test-password",
+            role=User.Role.SUPERVISOR,
+        )
+        self.shared_supervisor = User.objects.create_user(
+            email="archive_shared@unibas.ch",
+            password="test-password",
+            role=User.Role.SUPERVISOR,
+        )
+        self.unrelated_supervisor = User.objects.create_user(
+            email="archive_unrelated@unibas.ch",
+            password="test-password",
+            role=User.Role.SUPERVISOR,
+        )
+        self.administrator = User.objects.create_user(
+            email="archive_admin@unibas.ch",
+            password="test-password",
+            role=User.Role.ADMINISTRATOR,
+        )
+        self.student = User.objects.create_user(
+            email="archive_student@unibas.ch",
+            password="test-password",
+            role=User.Role.STUDENT,
+        )
+        self.other_student = User.objects.create_user(
+            email="archive_other_student@unibas.ch",
+            password="test-password",
+            role=User.Role.STUDENT,
+        )
+        self.course = Course.objects.create(
+            title="Archive Course",
+            created_by=self.owner_supervisor,
+        )
+        self.course.supervisors.add(self.shared_supervisor)
+        self.other_course = Course.objects.create(
+            title="Archive Other Course",
+            created_by=self.administrator,
+        )
+        self.tutorial = Tutorial.objects.create(course=self.course, title="Archive Tutorial", order_index=1)
+        self.other_tutorial = Tutorial.objects.create(
+            course=self.other_course,
+            title="Archive Other Tutorial",
+            order_index=1,
+        )
+        self.exercise = Exercise.objects.create(
+            tutorial=self.tutorial,
+            title="Archive Exercise",
+            order_index=1,
+            exercise_type=Exercise.ExerciseType.DOCUMENT_UPLOAD,
+        )
+        self.other_exercise = Exercise.objects.create(
+            tutorial=self.other_tutorial,
+            title="Archive Other Exercise",
+            order_index=1,
+            exercise_type=Exercise.ExerciseType.NUMERICAL,
+        )
+        self.variant = ExerciseVariant.objects.create(
+            exercise=self.exercise,
+            exercise_text="Archive variant",
+            available_points="1.00",
+        )
+        self.other_variant = ExerciseVariant.objects.create(
+            exercise=self.other_exercise,
+            exercise_text="Archive other variant",
+            reference_solution="1.0000",
+            absolute_tolerance="0.1000",
+            available_points="1.00",
+        )
+        self.current_result = Result.objects.create(
+            student=self.student,
+            course=self.course,
+            tutorial=self.tutorial,
+            exercise=self.exercise,
+            assigned_variant=self.variant,
+            uploaded_file=SimpleUploadedFile("archive-target.pdf", b"archive target"),
+            is_manually_graded=False,
+            is_archived=False,
+        )
+        self.other_course_result = Result.objects.create(
+            student=self.other_student,
+            course=self.other_course,
+            tutorial=self.other_tutorial,
+            exercise=self.other_exercise,
+            assigned_variant=self.other_variant,
+            submitted_numerical_value="1.0000",
+            is_correct=True,
+            score="1.00",
+            is_manually_graded=True,
+            is_archived=False,
+        )
+
+    def test_get_shows_confirmation_with_current_result_count(self):
+        self.client.force_login(self.owner_supervisor)
+        response = self.client.get(
+            reverse("supervisor_course_archive_results", args=[self.course.id])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Current (unarchived) results in this course: 1")
+
+    def test_post_archives_only_current_results_for_selected_course(self):
+        self.client.force_login(self.owner_supervisor)
+        response = self.client.post(
+            reverse("supervisor_course_archive_results", args=[self.course.id])
+        )
+        self.assertRedirects(
+            response,
+            reverse("supervisor_course_summary", args=[self.course.id]),
+        )
+
+        self.assertEqual(ArchiveBatch.objects.filter(course=self.course).count(), 1)
+        batch = ArchiveBatch.objects.get(course=self.course)
+        self.current_result.refresh_from_db()
+        self.other_course_result.refresh_from_db()
+
+        self.assertEqual(self.current_result.archive_batch_id, batch.id)
+        self.assertTrue(self.current_result.is_archived)
+        self.assertTrue(bool(self.current_result.uploaded_file))
+        self.assertIsNone(self.other_course_result.archive_batch)
+        self.assertFalse(self.other_course_result.is_archived)
+
+    def test_access_control_for_archive_action(self):
+        archive_url = reverse("supervisor_course_archive_results", args=[self.course.id])
+
+        self.client.force_login(self.shared_supervisor)
+        self.assertEqual(self.client.get(archive_url).status_code, 200)
+
+        self.client.force_login(self.administrator)
+        self.assertEqual(self.client.get(archive_url).status_code, 200)
+
+        self.client.force_login(self.unrelated_supervisor)
+        self.assertEqual(self.client.get(archive_url).status_code, 403)
+
+        self.client.force_login(self.student)
+        self.assertEqual(self.client.get(archive_url).status_code, 403)

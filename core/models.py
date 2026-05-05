@@ -206,6 +206,29 @@ class ExerciseVariant(models.Model):
             raise ValidationError(errors)
 
 
+class ArchiveBatch(models.Model):
+    course = models.ForeignKey(
+        Course,
+        on_delete=models.PROTECT,
+        related_name="archive_batches",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="archive_batches_created",
+        blank=True,
+        null=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    note = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self):
+        return f"{self.course.title} - Archive batch {self.id}"
+
+
 class Result(models.Model):
     student = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -252,6 +275,13 @@ class Result(models.Model):
         blank=True,
         null=True,
     )
+    archive_batch = models.ForeignKey(
+        ArchiveBatch,
+        on_delete=models.PROTECT,
+        related_name="results",
+        blank=True,
+        null=True,
+    )
     is_archived = models.BooleanField(default=False)
 
     class Meta:
@@ -259,10 +289,15 @@ class Result(models.Model):
         constraints = [
             models.UniqueConstraint(
                 fields=["student", "exercise"],
-                condition=models.Q(is_archived=False),
+                condition=models.Q(archive_batch__isnull=True),
                 name="core_result_unique_active_student_exercise",
             )
         ]
+
+    def save(self, *args, **kwargs):
+        # Keep legacy flag aligned while archive_batch becomes archive source of truth.
+        self.is_archived = self.archive_batch_id is not None
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.student.email} - {self.exercise.title}"

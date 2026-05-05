@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Archive Results - {{ course.title }}</title>
+</head>
+<body>
+    <h1>Archive current results: {{ course.title }}</h1>
+    <p>Current (unarchived) results in this course: {{ current_results_count }}</p>
+    <p>This will archive current results for this course only.</p>
+    <form method="post">
+        {% csrf_token %}
+        <button type="submit">Archive results</button>
+    </form>
+    <p>
+        <a href="{% url 'supervisor_course_summary' course.id %}">Cancel</a>
+    </p>
+</body>
+</html>

@@ -5,9 +5,9 @@ from decimal import Decimal
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.exceptions import PermissionDenied
 from django.core.files.storage import default_storage
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.http import FileResponse, Http404
-from django.shortcuts import get_object_or_404
+from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.urls import reverse_lazy
 from django.views import View
@@ -21,7 +21,7 @@ from .forms import (
     UploadSubmissionForm,
 )
 from .grading import is_numerical_answer_correct
-from .models import Course, Exercise, Result, Tutorial, User
+from .models import ArchiveBatch, Course, Exercise, Result, Tutorial, User
 
 
 def _user_can_access_course(user, course):
@@ -215,7 +215,10 @@ class SupervisorExerciseSubmissionsView(SupervisorRequiredMixin, DetailView):
         if not _user_can_access_course(self.request.user, self.object.tutorial.course):
             raise PermissionDenied
         context = super().get_context_data(**kwargs)
-        submissions = Result.objects.filter(exercise=self.object).select_related("student")
+        submissions = Result.objects.filter(
+            exercise=self.object,
+            archive_batch__isnull=True,
+        ).select_related("student")
         status_filter = self.request.GET.get("status")
         if status_filter == "graded":
             submissions = submissions.filter(is_manually_graded=True)
@@ -231,6 +234,9 @@ class SupervisorSubmissionDetailView(SupervisorRequiredMixin, DetailView):
     template_name = "core/supervisor_submission_detail.html"
     context_object_name = "submission"
     pk_url_kwarg = "result_id"
+
+    def get_queryset(self):
+        return Result.objects.filter(archive_batch__isnull=True)
 
     def get_context_data(self, **kwargs):
         if not _user_can_access_course(self.request.user, self.object.course):
@@ -275,7 +281,7 @@ class SupervisorSubmissionDetailView(SupervisorRequiredMixin, DetailView):
 
 class SupervisorSubmissionFileDownloadView(SupervisorRequiredMixin, View):
     def get(self, request, result_id):
-        submission = get_object_or_404(Result, pk=result_id)
+        submission = get_object_or_404(Result, pk=result_id, archive_batch__isnull=True)
         if not _user_can_access_course(request.user, submission.course):
             raise PermissionDenied
         if not submission.uploaded_file:
@@ -324,7 +330,11 @@ class SupervisorCourseSummaryView(SupervisorRequiredMixin, DetailView):
         )
         exercise_ids = [exercise.id for exercise in exercises]
         all_results = list(
-            Result.objects.filter(course=self.object, exercise_id__in=exercise_ids)
+            Result.objects.filter(
+                course=self.object,
+                exercise_id__in=exercise_ids,
+                archive_batch__isnull=True,
+            )
             .select_related("student")
             .order_by("-submitted_at", "-id")
         )
@@ -370,6 +380,45 @@ class SupervisorCourseSummaryView(SupervisorRequiredMixin, DetailView):
         context["selected_student"] = selected_student
         context["selected_student_id"] = str(selected_student.id) if selected_student else ""
         return context
+
+
+class SupervisorCourseArchiveResultsView(SupervisorRequiredMixin, View):
+    template_name = "core/supervisor_course_archive_results_confirm.html"
+
+    def _get_course(self, course_id):
+        return get_object_or_404(Course, pk=course_id)
+
+    def _get_current_results_queryset(self, course):
+        return Result.objects.filter(course=course, archive_batch__isnull=True)
+
+    def get(self, request, course_id):
+        course = self._get_course(course_id)
+        if not _user_can_access_course(request.user, course):
+            raise PermissionDenied
+        current_results_count = self._get_current_results_queryset(course).count()
+        return render(
+            request,
+            self.template_name,
+            {
+                "course": course,
+                "current_results_count": current_results_count,
+            },
+        )
+
+    def post(self, request, course_id):
+        course = self._get_course(course_id)
+        if not _user_can_access_course(request.user, course):
+            raise PermissionDenied
+        with transaction.atomic():
+            batch = ArchiveBatch.objects.create(
+                course=course,
+                created_by=request.user,
+            )
+            self._get_current_results_queryset(course).update(
+                archive_batch=batch,
+                is_archived=True,
+            )
+        return redirect("supervisor_course_summary", course_id=course.id)
 
 
 class RegisterView(CreateView):
