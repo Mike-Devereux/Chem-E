@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Archives - {{ course.title }}</title>
+</head>
+<body>
+    <h1>Archive batches: {{ course.title }}</h1>
+    {% if archive_batches %}
+        <table border="1" cellpadding="4" cellspacing="0">
+            <thead>
+                <tr>
+                    <th>Archive date</th>
+                    <th>Created by</th>
+                    <th>Label / note</th>
+                    <th>Result count</th>
+                    <th>Detail</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for batch in archive_batches %}
+                    <tr>
+                        <td>{{ batch.created_at }}</td>
+                        <td>{% if batch.created_by %}{{ batch.created_by.email }}{% else %}-{% endif %}</td>
+                        <td>{{ batch.note|default:"-" }}</td>
+                        <td>{{ batch.result_count }}</td>
+                        <td>
+                            <a href="{% url 'supervisor_course_archive_batch_detail' batch.id %}">View</a>
+                        </td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p>No archive batches yet.</p>
+    {% endif %}
+</body>
+</html>

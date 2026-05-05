@@ -6,6 +6,9 @@ from .views import (
     CourseListView,
     ExerciseDetailView,
     RegisterView,
+    SupervisorArchivedSubmissionFileDownloadView,
+    SupervisorCourseArchiveBatchDetailView,
+    SupervisorCourseArchivesView,
     SupervisorCourseArchiveResultsView,
     SupervisorCourseSummaryView,
     SupervisorSubmissionFileDownloadView,
@@ -35,6 +38,11 @@ urlpatterns = [
         name="supervisor_submission_file_download",
     ),
     path(
+        "supervisor/archived-submissions/<int:result_id>/file/",
+        SupervisorArchivedSubmissionFileDownloadView.as_view(),
+        name="supervisor_archived_submission_file_download",
+    ),
+    path(
         "supervisor/courses/<int:course_id>/summary/",
         SupervisorCourseSummaryView.as_view(),
         name="supervisor_course_summary",
@@ -43,6 +51,16 @@ urlpatterns = [
         "supervisor/courses/<int:course_id>/archive-results/",
         SupervisorCourseArchiveResultsView.as_view(),
         name="supervisor_course_archive_results",
+    ),
+    path(
+        "supervisor/courses/<int:course_id>/archives/",
+        SupervisorCourseArchivesView.as_view(),
+        name="supervisor_course_archives",
+    ),
+    path(
+        "supervisor/archives/<int:archive_batch_id>/",
+        SupervisorCourseArchiveBatchDetailView.as_view(),
+        name="supervisor_course_archive_batch_detail",
     ),
     path("register/", RegisterView.as_view(), name="register"),
     path("login/", auth_views.LoginView.as_view(), name="login"),

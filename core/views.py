@@ -6,6 +6,7 @@ from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.exceptions import PermissionDenied
 from django.core.files.storage import default_storage
 from django.db import IntegrityError, transaction
+from django.db.models import Count
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -409,16 +410,78 @@ class SupervisorCourseArchiveResultsView(SupervisorRequiredMixin, View):
         course = self._get_course(course_id)
         if not _user_can_access_course(request.user, course):
             raise PermissionDenied
+        note = request.POST.get("note", "").strip()
         with transaction.atomic():
             batch = ArchiveBatch.objects.create(
                 course=course,
                 created_by=request.user,
+                note=note,
             )
             self._get_current_results_queryset(course).update(
                 archive_batch=batch,
                 is_archived=True,
             )
         return redirect("supervisor_course_summary", course_id=course.id)
+
+
+class SupervisorCourseArchivesView(SupervisorRequiredMixin, View):
+    template_name = "core/supervisor_course_archives.html"
+
+    def get(self, request, course_id):
+        course = get_object_or_404(Course, pk=course_id)
+        if not _user_can_access_course(request.user, course):
+            raise PermissionDenied
+        archive_batches = (
+            ArchiveBatch.objects.filter(course=course)
+            .select_related("created_by")
+            .annotate(result_count=Count("results"))
+            .order_by("-created_at", "-id")
+        )
+        return render(
+            request,
+            self.template_name,
+            {
+                "course": course,
+                "archive_batches": archive_batches,
+            },
+        )
+
+
+class SupervisorCourseArchiveBatchDetailView(SupervisorRequiredMixin, DetailView):
+    model = ArchiveBatch
+    template_name = "core/supervisor_course_archive_batch_detail.html"
+    context_object_name = "archive_batch"
+    pk_url_kwarg = "archive_batch_id"
+
+    def get_queryset(self):
+        return ArchiveBatch.objects.select_related("course", "created_by")
+
+    def dispatch(self, request, *args, **kwargs):
+        self.object = self.get_object()
+        if not _user_can_access_course(request.user, self.object.course):
+            raise PermissionDenied
+        return super().dispatch(request, *args, **kwargs)
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["results"] = self.object.results.select_related(
+            "student", "exercise", "tutorial"
+        ).order_by("-submitted_at", "-id")
+        return context
+
+
+class SupervisorArchivedSubmissionFileDownloadView(SupervisorRequiredMixin, View):
+    def get(self, request, result_id):
+        submission = get_object_or_404(Result, pk=result_id, archive_batch__isnull=False)
+        if not _user_can_access_course(request.user, submission.course):
+            raise PermissionDenied
+        if not submission.uploaded_file:
+            raise Http404("No uploaded file for this submission.")
+        return FileResponse(
+            submission.uploaded_file.open("rb"),
+            as_attachment=True,
+            filename=os.path.basename(submission.uploaded_file.name),
+        )
 
 
 class RegisterView(CreateView):

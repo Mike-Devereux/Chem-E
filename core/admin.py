@@ -289,7 +289,7 @@ class ResultAdmin(admin.ModelAdmin):
 
 @admin.register(ArchiveBatch)
 class ArchiveBatchAdmin(admin.ModelAdmin):
-    list_display = ("id", "course", "created_by", "created_at")
+    list_display = ("id", "course", "note", "created_by", "created_at")
     list_filter = ("course", "created_at")
     search_fields = ("course__title", "created_by__email", "note")
     ordering = ("-created_at", "-id")

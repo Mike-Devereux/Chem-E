@@ -11,6 +11,10 @@
     <p>This will archive current results for this course only.</p>
     <form method="post">
         {% csrf_token %}
+        <p>
+            <label for="note">Archive label / note (optional):</label><br>
+            <input type="text" id="note" name="note" maxlength="200" placeholder="Spring 2026 Tutorial 1">
+        </p>
         <button type="submit">Archive results</button>
     </form>
     <p>

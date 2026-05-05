@@ -1951,11 +1951,13 @@ class SupervisorCourseArchiveResultsViewTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Current (unarchived) results in this course: 1")
+        self.assertContains(response, 'name="note"', html=False)
 
     def test_post_archives_only_current_results_for_selected_course(self):
         self.client.force_login(self.owner_supervisor)
         response = self.client.post(
-            reverse("supervisor_course_archive_results", args=[self.course.id])
+            reverse("supervisor_course_archive_results", args=[self.course.id]),
+            {"note": "Spring 2026 Tutorial 1"},
         )
         self.assertRedirects(
             response,
@@ -1968,6 +1970,7 @@ class SupervisorCourseArchiveResultsViewTests(TestCase):
         self.other_course_result.refresh_from_db()
 
         self.assertEqual(self.current_result.archive_batch_id, batch.id)
+        self.assertEqual(batch.note, "Spring 2026 Tutorial 1")
         self.assertTrue(self.current_result.is_archived)
         self.assertTrue(bool(self.current_result.uploaded_file))
         self.assertIsNone(self.other_course_result.archive_batch)
@@ -1987,3 +1990,90 @@ class SupervisorCourseArchiveResultsViewTests(TestCase):
 
         self.client.force_login(self.student)
         self.assertEqual(self.client.get(archive_url).status_code, 403)
+
+    def test_archives_page_lists_batches_with_metadata_and_detail_link(self):
+        batch = ArchiveBatch.objects.create(
+            course=self.course,
+            created_by=self.owner_supervisor,
+            note="Spring 2026 Tutorial 1",
+        )
+        self.current_result.archive_batch = batch
+        self.current_result.is_archived = True
+        self.current_result.save(update_fields=["archive_batch", "is_archived"])
+
+        self.client.force_login(self.owner_supervisor)
+        response = self.client.get(reverse("supervisor_course_archives", args=[self.course.id]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Spring 2026 Tutorial 1")
+        self.assertContains(response, self.owner_supervisor.email)
+        self.assertContains(response, "<td>1</td>", html=True)
+        self.assertContains(
+            response,
+            reverse("supervisor_course_archive_batch_detail", args=[batch.id]),
+        )
+
+    def test_archives_page_access_control(self):
+        archives_url = reverse("supervisor_course_archives", args=[self.course.id])
+
+        self.client.force_login(self.shared_supervisor)
+        self.assertEqual(self.client.get(archives_url).status_code, 200)
+
+        self.client.force_login(self.administrator)
+        self.assertEqual(self.client.get(archives_url).status_code, 200)
+
+        self.client.force_login(self.unrelated_supervisor)
+        self.assertEqual(self.client.get(archives_url).status_code, 403)
+
+        self.client.force_login(self.student)
+        self.assertEqual(self.client.get(archives_url).status_code, 403)
+
+    def test_archive_batch_detail_page_access_and_course_scoping(self):
+        batch = ArchiveBatch.objects.create(
+            course=self.course,
+            created_by=self.owner_supervisor,
+            note="Scoped batch",
+        )
+        self.current_result.archive_batch = batch
+        self.current_result.is_archived = True
+        self.current_result.save(update_fields=["archive_batch", "is_archived"])
+
+        detail_url = reverse(
+            "supervisor_course_archive_batch_detail",
+            args=[batch.id],
+        )
+
+        self.client.force_login(self.owner_supervisor)
+        detail_response = self.client.get(detail_url)
+        self.assertEqual(detail_response.status_code, 200)
+        self.assertContains(detail_response, "Scoped batch")
+        self.assertContains(detail_response, self.student.email)
+        self.assertContains(
+            detail_response,
+            reverse("supervisor_archived_submission_file_download", args=[self.current_result.id]),
+        )
+
+        self.client.force_login(self.unrelated_supervisor)
+        self.assertEqual(self.client.get(detail_url).status_code, 403)
+
+    def test_archived_file_download_is_course_access_controlled(self):
+        batch = ArchiveBatch.objects.create(
+            course=self.course,
+            created_by=self.owner_supervisor,
+            note="File batch",
+        )
+        self.current_result.archive_batch = batch
+        self.current_result.is_archived = True
+        self.current_result.save(update_fields=["archive_batch", "is_archived"])
+
+        download_url = reverse(
+            "supervisor_archived_submission_file_download",
+            args=[self.current_result.id],
+        )
+
+        self.client.force_login(self.owner_supervisor)
+        ok_response = self.client.get(download_url)
+        self.assertEqual(ok_response.status_code, 200)
+
+        self.client.force_login(self.unrelated_supervisor)
+        denied_response = self.client.get(download_url)
+        self.assertEqual(denied_response.status_code, 403)
