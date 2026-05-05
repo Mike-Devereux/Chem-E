@@ -9,21 +9,9 @@
     <h1>Supervisor landing</h1>
     <ul>
         <li><a href="{% url 'home' %}">Student landing page (available courses)</a></li>
+        <li><a href="{% url 'supervisor_course_manage_list' %}">Supervisor content editor (tree workflow)</a></li>
         <li><a href="{% url 'supervisor_course_summary_list' %}">Supervisor course summaries</a></li>
         <li><a href="/admin/">Admin area</a></li>
     </ul>
-
-    <h2>Accessible courses</h2>
-    {% if courses %}
-        <ul>
-            {% for course in courses %}
-                <li>
-                    <a href="{% url 'supervisor_course_summary' course.id %}">{{ course.title }}</a>
-                </li>
-            {% endfor %}
-        </ul>
-    {% else %}
-        <p>No accessible courses.</p>
-    {% endif %}
 </body>
 </html>

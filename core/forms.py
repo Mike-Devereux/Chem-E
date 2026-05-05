@@ -1,7 +1,7 @@
 from django.contrib.auth.forms import UserCreationForm
 from django import forms
 
-from .models import User
+from .models import Course, Exercise, ExerciseVariant, Tutorial, User
 from .validators import validate_student_submission_file
 
 
@@ -36,3 +36,34 @@ class ManualUploadGradingForm(forms.Form):
         required=False,
         widget=forms.Textarea(attrs={"rows": 3}),
     )
+
+
+class CourseEditForm(forms.ModelForm):
+    class Meta:
+        model = Course
+        fields = ("title", "description", "is_active")
+
+
+class TutorialEditForm(forms.ModelForm):
+    class Meta:
+        model = Tutorial
+        fields = ("title", "description", "order_index", "is_active")
+
+
+class ExerciseEditForm(forms.ModelForm):
+    class Meta:
+        model = Exercise
+        fields = ("title", "order_index", "exercise_type", "is_active")
+
+
+class ExerciseVariantEditForm(forms.ModelForm):
+    class Meta:
+        model = ExerciseVariant
+        fields = (
+            "exercise_text",
+            "image",
+            "reference_solution",
+            "absolute_tolerance",
+            "available_points",
+            "supervisor_notes",
+        )

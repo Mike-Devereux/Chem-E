@@ -2,6 +2,7 @@ import random
 import os
 from decimal import Decimal
 
+from django.contrib.auth import views as auth_views
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.exceptions import PermissionDenied
 from django.core.files.storage import default_storage
@@ -16,13 +17,17 @@ from django.views.generic import CreateView, DetailView, ListView
 
 from .access import SupervisorRequiredMixin
 from .forms import (
+    CourseEditForm,
+    ExerciseEditForm,
+    ExerciseVariantEditForm,
     ManualUploadGradingForm,
     NumericalAnswerForm,
     RegistrationForm,
+    TutorialEditForm,
     UploadSubmissionForm,
 )
 from .grading import is_numerical_answer_correct
-from .models import ArchiveBatch, Course, Exercise, Result, Tutorial, User
+from .models import ArchiveBatch, Course, Exercise, ExerciseVariant, Result, Tutorial, User
 
 
 def _user_can_access_course(user, course):
@@ -39,6 +44,11 @@ def _courses_accessible_to_supervisor_or_admin(user):
     return Course.objects.filter(supervisors=user).order_by("title")
 
 
+def _assert_user_can_manage_course(user, course):
+    if not _user_can_access_course(user, course):
+        raise PermissionDenied
+
+
 class CourseListView(LoginRequiredMixin, ListView):
     model = Course
     template_name = "core/course_list.html"
@@ -46,6 +56,14 @@ class CourseListView(LoginRequiredMixin, ListView):
 
     def get_queryset(self):
         return Course.objects.filter(is_active=True).order_by("title")
+
+
+class RoleAwareLoginView(auth_views.LoginView):
+    def get_success_url(self):
+        user = self.request.user
+        if user.role in {User.Role.SUPERVISOR, User.Role.ADMINISTRATOR} or user.is_superuser:
+            return reverse_lazy("supervisor_landing")
+        return super().get_success_url()
 
 
 class SupervisorLandingView(SupervisorRequiredMixin, View):
@@ -69,6 +87,269 @@ class SupervisorCourseSummaryListView(SupervisorRequiredMixin, View):
             request,
             self.template_name,
             {"courses": courses},
+        )
+
+
+class SupervisorCourseManageListView(SupervisorRequiredMixin, View):
+    template_name = "core/supervisor_course_manage_list.html"
+
+    def get(self, request):
+        courses = _courses_accessible_to_supervisor_or_admin(request.user)
+        return render(request, self.template_name, {"courses": courses})
+
+
+class SupervisorCourseManageDetailView(SupervisorRequiredMixin, DetailView):
+    model = Course
+    template_name = "core/supervisor_course_manage_detail.html"
+    context_object_name = "course"
+    pk_url_kwarg = "course_id"
+
+    def get_context_data(self, **kwargs):
+        _assert_user_can_manage_course(self.request.user, self.object)
+        context = super().get_context_data(**kwargs)
+        context["tutorials"] = self.object.tutorials.order_by("order_index", "id")
+        return context
+
+
+class SupervisorCourseEditView(SupervisorRequiredMixin, View):
+    template_name = "core/supervisor_simple_form.html"
+
+    def _get_course(self, course_id):
+        course = get_object_or_404(Course, pk=course_id)
+        _assert_user_can_manage_course(self.request.user, course)
+        return course
+
+    def get(self, request, course_id):
+        course = self._get_course(course_id)
+        form = CourseEditForm(instance=course)
+        return render(
+            request,
+            self.template_name,
+            {"form": form, "title": f"Edit course: {course.title}", "cancel_url": reverse_lazy("supervisor_course_manage_detail", kwargs={"course_id": course.id})},
+        )
+
+    def post(self, request, course_id):
+        course = self._get_course(course_id)
+        form = CourseEditForm(request.POST, instance=course)
+        if form.is_valid():
+            form.save()
+            return redirect("supervisor_course_manage_detail", course_id=course.id)
+        return render(
+            request,
+            self.template_name,
+            {"form": form, "title": f"Edit course: {course.title}", "cancel_url": reverse_lazy("supervisor_course_manage_detail", kwargs={"course_id": course.id})},
+        )
+
+
+class SupervisorTutorialCreateView(SupervisorRequiredMixin, View):
+    template_name = "core/supervisor_simple_form.html"
+
+    def _get_course(self, course_id):
+        course = get_object_or_404(Course, pk=course_id)
+        _assert_user_can_manage_course(self.request.user, course)
+        return course
+
+    def get(self, request, course_id):
+        course = self._get_course(course_id)
+        form = TutorialEditForm()
+        return render(
+            request,
+            self.template_name,
+            {"form": form, "title": f"Create tutorial in {course.title}", "cancel_url": reverse_lazy("supervisor_course_manage_detail", kwargs={"course_id": course.id})},
+        )
+
+    def post(self, request, course_id):
+        course = self._get_course(course_id)
+        form = TutorialEditForm(request.POST)
+        if form.is_valid():
+            tutorial = form.save(commit=False)
+            tutorial.course = course
+            tutorial.save()
+            return redirect("supervisor_course_manage_detail", course_id=course.id)
+        return render(
+            request,
+            self.template_name,
+            {"form": form, "title": f"Create tutorial in {course.title}", "cancel_url": reverse_lazy("supervisor_course_manage_detail", kwargs={"course_id": course.id})},
+        )
+
+
+class SupervisorTutorialManageDetailView(SupervisorRequiredMixin, DetailView):
+    model = Tutorial
+    template_name = "core/supervisor_tutorial_manage_detail.html"
+    context_object_name = "tutorial"
+    pk_url_kwarg = "tutorial_id"
+
+    def get_context_data(self, **kwargs):
+        _assert_user_can_manage_course(self.request.user, self.object.course)
+        context = super().get_context_data(**kwargs)
+        context["exercises"] = self.object.exercises.order_by("order_index", "id")
+        return context
+
+
+class SupervisorTutorialEditView(SupervisorRequiredMixin, View):
+    template_name = "core/supervisor_simple_form.html"
+
+    def _get_tutorial(self, tutorial_id):
+        tutorial = get_object_or_404(Tutorial, pk=tutorial_id)
+        _assert_user_can_manage_course(self.request.user, tutorial.course)
+        return tutorial
+
+    def get(self, request, tutorial_id):
+        tutorial = self._get_tutorial(tutorial_id)
+        form = TutorialEditForm(instance=tutorial)
+        return render(
+            request,
+            self.template_name,
+            {"form": form, "title": f"Edit tutorial: {tutorial.title}", "cancel_url": reverse_lazy("supervisor_tutorial_manage_detail", kwargs={"tutorial_id": tutorial.id})},
+        )
+
+    def post(self, request, tutorial_id):
+        tutorial = self._get_tutorial(tutorial_id)
+        form = TutorialEditForm(request.POST, instance=tutorial)
+        if form.is_valid():
+            form.save()
+            return redirect("supervisor_tutorial_manage_detail", tutorial_id=tutorial.id)
+        return render(
+            request,
+            self.template_name,
+            {"form": form, "title": f"Edit tutorial: {tutorial.title}", "cancel_url": reverse_lazy("supervisor_tutorial_manage_detail", kwargs={"tutorial_id": tutorial.id})},
+        )
+
+
+class SupervisorExerciseCreateView(SupervisorRequiredMixin, View):
+    template_name = "core/supervisor_simple_form.html"
+
+    def _get_tutorial(self, tutorial_id):
+        tutorial = get_object_or_404(Tutorial, pk=tutorial_id)
+        _assert_user_can_manage_course(self.request.user, tutorial.course)
+        return tutorial
+
+    def get(self, request, tutorial_id):
+        tutorial = self._get_tutorial(tutorial_id)
+        form = ExerciseEditForm()
+        return render(
+            request,
+            self.template_name,
+            {"form": form, "title": f"Create exercise in {tutorial.title}", "cancel_url": reverse_lazy("supervisor_tutorial_manage_detail", kwargs={"tutorial_id": tutorial.id})},
+        )
+
+    def post(self, request, tutorial_id):
+        tutorial = self._get_tutorial(tutorial_id)
+        form = ExerciseEditForm(request.POST)
+        if form.is_valid():
+            exercise = form.save(commit=False)
+            exercise.tutorial = tutorial
+            exercise.save()
+            return redirect("supervisor_tutorial_manage_detail", tutorial_id=tutorial.id)
+        return render(
+            request,
+            self.template_name,
+            {"form": form, "title": f"Create exercise in {tutorial.title}", "cancel_url": reverse_lazy("supervisor_tutorial_manage_detail", kwargs={"tutorial_id": tutorial.id})},
+        )
+
+
+class SupervisorExerciseManageDetailView(SupervisorRequiredMixin, DetailView):
+    model = Exercise
+    template_name = "core/supervisor_exercise_manage_detail.html"
+    context_object_name = "exercise"
+    pk_url_kwarg = "exercise_id"
+
+    def get_context_data(self, **kwargs):
+        _assert_user_can_manage_course(self.request.user, self.object.tutorial.course)
+        context = super().get_context_data(**kwargs)
+        context["variants"] = self.object.variants.order_by("id")
+        return context
+
+
+class SupervisorExerciseEditView(SupervisorRequiredMixin, View):
+    template_name = "core/supervisor_simple_form.html"
+
+    def _get_exercise(self, exercise_id):
+        exercise = get_object_or_404(Exercise, pk=exercise_id)
+        _assert_user_can_manage_course(self.request.user, exercise.tutorial.course)
+        return exercise
+
+    def get(self, request, exercise_id):
+        exercise = self._get_exercise(exercise_id)
+        form = ExerciseEditForm(instance=exercise)
+        return render(
+            request,
+            self.template_name,
+            {"form": form, "title": f"Edit exercise: {exercise.title}", "cancel_url": reverse_lazy("supervisor_exercise_manage_detail", kwargs={"exercise_id": exercise.id})},
+        )
+
+    def post(self, request, exercise_id):
+        exercise = self._get_exercise(exercise_id)
+        form = ExerciseEditForm(request.POST, instance=exercise)
+        if form.is_valid():
+            form.save()
+            return redirect("supervisor_exercise_manage_detail", exercise_id=exercise.id)
+        return render(
+            request,
+            self.template_name,
+            {"form": form, "title": f"Edit exercise: {exercise.title}", "cancel_url": reverse_lazy("supervisor_exercise_manage_detail", kwargs={"exercise_id": exercise.id})},
+        )
+
+
+class SupervisorExerciseVariantCreateView(SupervisorRequiredMixin, View):
+    template_name = "core/supervisor_simple_form.html"
+
+    def _get_exercise(self, exercise_id):
+        exercise = get_object_or_404(Exercise, pk=exercise_id)
+        _assert_user_can_manage_course(self.request.user, exercise.tutorial.course)
+        return exercise
+
+    def get(self, request, exercise_id):
+        exercise = self._get_exercise(exercise_id)
+        form = ExerciseVariantEditForm()
+        return render(
+            request,
+            self.template_name,
+            {"form": form, "title": f"Create variant for {exercise.title}", "cancel_url": reverse_lazy("supervisor_exercise_manage_detail", kwargs={"exercise_id": exercise.id})},
+        )
+
+    def post(self, request, exercise_id):
+        exercise = self._get_exercise(exercise_id)
+        form = ExerciseVariantEditForm(request.POST, request.FILES)
+        if form.is_valid():
+            variant = form.save(commit=False)
+            variant.exercise = exercise
+            variant.save()
+            return redirect("supervisor_exercise_manage_detail", exercise_id=exercise.id)
+        return render(
+            request,
+            self.template_name,
+            {"form": form, "title": f"Create variant for {exercise.title}", "cancel_url": reverse_lazy("supervisor_exercise_manage_detail", kwargs={"exercise_id": exercise.id})},
+        )
+
+
+class SupervisorExerciseVariantEditView(SupervisorRequiredMixin, View):
+    template_name = "core/supervisor_simple_form.html"
+
+    def _get_variant(self, variant_id):
+        variant = get_object_or_404(ExerciseVariant, pk=variant_id)
+        _assert_user_can_manage_course(self.request.user, variant.exercise.tutorial.course)
+        return variant
+
+    def get(self, request, variant_id):
+        variant = self._get_variant(variant_id)
+        form = ExerciseVariantEditForm(instance=variant)
+        return render(
+            request,
+            self.template_name,
+            {"form": form, "title": f"Edit variant {variant.id}", "cancel_url": reverse_lazy("supervisor_exercise_manage_detail", kwargs={"exercise_id": variant.exercise_id})},
+        )
+
+    def post(self, request, variant_id):
+        variant = self._get_variant(variant_id)
+        form = ExerciseVariantEditForm(request.POST, request.FILES, instance=variant)
+        if form.is_valid():
+            form.save()
+            return redirect("supervisor_exercise_manage_detail", exercise_id=variant.exercise_id)
+        return render(
+            request,
+            self.template_name,
+            {"form": form, "title": f"Edit variant {variant.id}", "cancel_url": reverse_lazy("supervisor_exercise_manage_detail", kwargs={"exercise_id": variant.exercise_id})},
         )
 
 

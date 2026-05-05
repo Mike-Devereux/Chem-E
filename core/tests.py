@@ -2557,7 +2557,7 @@ class SupervisorLandingAndSummaryListViewTests(TestCase):
         landing_response = self.client.get(reverse("supervisor_landing"))
         summary_list_response = self.client.get(reverse("supervisor_course_summary_list"))
 
-        self.assertContains(landing_response, "Landing Course A")
+        self.assertNotContains(landing_response, "Landing Course A")
         self.assertNotContains(landing_response, "Landing Course B")
         self.assertContains(summary_list_response, "Landing Course A")
         self.assertNotContains(summary_list_response, "Landing Course B")
@@ -2568,8 +2568,8 @@ class SupervisorLandingAndSummaryListViewTests(TestCase):
         summary_list_response = self.client.get(reverse("supervisor_course_summary_list"))
         self.assertEqual(landing_response.status_code, 200)
         self.assertEqual(summary_list_response.status_code, 200)
-        self.assertContains(landing_response, "Landing Course A")
-        self.assertContains(landing_response, "Landing Course B")
+        self.assertNotContains(landing_response, "Landing Course A")
+        self.assertNotContains(landing_response, "Landing Course B")
         self.assertContains(summary_list_response, "Landing Course A")
         self.assertContains(summary_list_response, "Landing Course B")
 
@@ -2579,5 +2579,130 @@ class SupervisorLandingAndSummaryListViewTests(TestCase):
         summary_list_response = self.client.get(reverse("supervisor_course_summary_list"))
         self.assertEqual(landing_response.status_code, 200)
         self.assertEqual(summary_list_response.status_code, 200)
-        self.assertContains(landing_response, "No accessible courses.")
+        self.assertNotContains(landing_response, "No accessible courses.")
         self.assertContains(summary_list_response, "No accessible courses.")
+
+    def test_login_redirects_administrator_and_supervisor_to_supervisor_landing(self):
+        admin_login = self.client.post(
+            reverse("login"),
+            {"username": self.administrator.email, "password": "test-password"},
+        )
+        self.assertRedirects(admin_login, reverse("supervisor_landing"))
+
+        self.client.logout()
+        supervisor_login = self.client.post(
+            reverse("login"),
+            {"username": self.supervisor_owner.email, "password": "test-password"},
+        )
+        self.assertRedirects(supervisor_login, reverse("supervisor_landing"))
+
+
+class SupervisorTreeEditingWorkflowTests(TestCase):
+    def setUp(self):
+        self.student = User.objects.create_user(
+            email="tree_student@unibas.ch",
+            password="test-password",
+            role=User.Role.STUDENT,
+        )
+        self.supervisor = User.objects.create_user(
+            email="tree_supervisor@unibas.ch",
+            password="test-password",
+            role=User.Role.SUPERVISOR,
+        )
+        self.other_supervisor = User.objects.create_user(
+            email="tree_other_supervisor@unibas.ch",
+            password="test-password",
+            role=User.Role.SUPERVISOR,
+        )
+        self.admin = User.objects.create_user(
+            email="tree_admin@unibas.ch",
+            password="test-password",
+            role=User.Role.ADMINISTRATOR,
+        )
+        self.course = Course.objects.create(
+            title="Tree Workflow Course",
+            created_by=self.supervisor,
+        )
+        self.other_course = Course.objects.create(
+            title="Other Workflow Course",
+            created_by=self.other_supervisor,
+        )
+        self.tutorial = Tutorial.objects.create(
+            course=self.course,
+            title="Tree Tutorial",
+            order_index=1,
+        )
+        self.exercise = Exercise.objects.create(
+            tutorial=self.tutorial,
+            title="Tree Exercise",
+            order_index=1,
+            exercise_type=Exercise.ExerciseType.NUMERICAL,
+        )
+        self.variant = ExerciseVariant.objects.create(
+            exercise=self.exercise,
+            exercise_text="Tree Variant",
+            reference_solution="1.0000",
+            absolute_tolerance="0.1000",
+            available_points="1.00",
+        )
+
+    def test_students_cannot_access_supervisor_tree_pages(self):
+        self.client.force_login(self.student)
+        response = self.client.get(reverse("supervisor_course_manage_list"))
+        self.assertEqual(response.status_code, 403)
+
+    def test_supervisor_tree_pages_show_hierarchy(self):
+        self.client.force_login(self.supervisor)
+        course_page = self.client.get(reverse("supervisor_course_manage_detail", args=[self.course.id]))
+        self.assertEqual(course_page.status_code, 200)
+        self.assertContains(course_page, "Tree Tutorial")
+        tutorial_page = self.client.get(
+            reverse("supervisor_tutorial_manage_detail", args=[self.tutorial.id])
+        )
+        self.assertContains(tutorial_page, "Tree Exercise")
+        exercise_page = self.client.get(
+            reverse("supervisor_exercise_manage_detail", args=[self.exercise.id])
+        )
+        self.assertContains(exercise_page, "Variant 1")
+
+    def test_create_child_pages_infer_parent_from_url_without_parent_dropdown(self):
+        self.client.force_login(self.supervisor)
+        tutorial_create = self.client.get(
+            reverse("supervisor_tutorial_create", args=[self.course.id])
+        )
+        self.assertEqual(tutorial_create.status_code, 200)
+        self.assertNotContains(tutorial_create, 'name="course"', html=False)
+
+        exercise_create = self.client.get(
+            reverse("supervisor_exercise_create", args=[self.tutorial.id])
+        )
+        self.assertNotContains(exercise_create, 'name="tutorial"', html=False)
+
+        variant_create = self.client.get(
+            reverse("supervisor_exercise_variant_create", args=[self.exercise.id])
+        )
+        self.assertNotContains(variant_create, 'name="exercise"', html=False)
+
+    def test_supervisor_access_is_restricted_to_their_courses_in_tree_workflow(self):
+        other_tutorial = Tutorial.objects.create(
+            course=self.other_course,
+            title="Other Tutorial",
+            order_index=1,
+        )
+        self.client.force_login(self.supervisor)
+        denied_response = self.client.get(
+            reverse("supervisor_tutorial_manage_detail", args=[other_tutorial.id])
+        )
+        self.assertEqual(denied_response.status_code, 403)
+
+    def test_administrator_can_access_all_tree_editing_pages(self):
+        other_tutorial = Tutorial.objects.create(
+            course=self.other_course,
+            title="Admin Tutorial",
+            order_index=2,
+        )
+        self.client.force_login(self.admin)
+        response = self.client.get(
+            reverse("supervisor_tutorial_manage_detail", args=[other_tutorial.id])
+        )
+        self.assertEqual(response.status_code, 200)
