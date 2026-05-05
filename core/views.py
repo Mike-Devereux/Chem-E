@@ -287,6 +287,50 @@ class SupervisorSubmissionFileDownloadView(SupervisorRequiredMixin, View):
         )
 
 
+class SupervisorCourseSummaryView(SupervisorRequiredMixin, DetailView):
+    model = Course
+    template_name = "core/supervisor_course_summary.html"
+    context_object_name = "course"
+    pk_url_kwarg = "course_id"
+
+    def get_context_data(self, **kwargs):
+        if not _user_can_access_course(self.request.user, self.object):
+            raise PermissionDenied
+        context = super().get_context_data(**kwargs)
+
+        exercises = list(
+            Exercise.objects.filter(tutorial__course=self.object)
+            .select_related("tutorial")
+            .order_by("tutorial__order_index", "tutorial_id", "order_index", "id")
+        )
+        results = list(
+            Result.objects.filter(course=self.object)
+            .select_related("student", "exercise", "tutorial", "assigned_variant")
+            .order_by("-submitted_at", "-id")
+        )
+        students = sorted({result.student for result in results}, key=lambda student: student.email)
+
+        results_by_student_exercise = {
+            student.id: {exercise.id: None for exercise in exercises} for student in students
+        }
+        for result in results:
+            student_results = results_by_student_exercise.setdefault(result.student_id, {})
+            student_results[result.exercise_id] = result
+
+        summary_rows = []
+        for student in students:
+            exercise_results = results_by_student_exercise.get(student.id, {})
+            cells = [exercise_results.get(exercise.id) for exercise in exercises]
+            summary_rows.append({"student": student, "cells": cells})
+
+        context["exercises"] = exercises
+        context["students"] = students
+        context["results"] = results
+        context["results_by_student_exercise"] = results_by_student_exercise
+        context["summary_rows"] = summary_rows
+        return context
+
+
 class RegisterView(CreateView):
     form_class = RegistrationForm
     template_name = "core/register.html"

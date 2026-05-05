@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Course Summary - {{ course.title }}</title>
+</head>
+<body>
+    <h1>Course summary: {{ course.title }}</h1>
+    <table border="1" cellpadding="4" cellspacing="0">
+        <thead>
+            <tr>
+                <th>Student</th>
+                {% for exercise in exercises %}
+                    <th>{{ exercise.title }}</th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in summary_rows %}
+                <tr>
+                    <th>{{ row.student.email }}</th>
+                    {% for result in row.cells %}
+                        <td>
+                            {% if result %}
+                                {% if result.is_manually_graded %}
+                                    {{ result.score }}
+                                {% elif result.uploaded_file or result.submitted_numerical_value is not None %}
+                                    Ungraded
+                                {% else %}
+                                    -
+                                {% endif %}
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                    {% endfor %}
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</body>
+</html>
