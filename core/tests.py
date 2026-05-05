@@ -2498,3 +2498,86 @@ class SupervisorCourseArchiveResultsViewTests(TestCase):
         self.assertEqual(self.current_result.archive_batch_id, old_batch.id)
         self.assertIsNotNone(self.current_numerical_result.archive_batch_id)
         self.assertNotEqual(self.current_numerical_result.archive_batch_id, old_batch.id)
+
+
+class SupervisorLandingAndSummaryListViewTests(TestCase):
+    def setUp(self):
+        self.student = User.objects.create_user(
+            email="landing_student@unibas.ch",
+            password="test-password",
+            role=User.Role.STUDENT,
+        )
+        self.supervisor_owner = User.objects.create_user(
+            email="landing_owner@unibas.ch",
+            password="test-password",
+            role=User.Role.SUPERVISOR,
+        )
+        self.shared_supervisor = User.objects.create_user(
+            email="landing_shared@unibas.ch",
+            password="test-password",
+            role=User.Role.SUPERVISOR,
+        )
+        self.unrelated_supervisor = User.objects.create_user(
+            email="landing_unrelated@unibas.ch",
+            password="test-password",
+            role=User.Role.SUPERVISOR,
+        )
+        self.administrator = User.objects.create_user(
+            email="landing_admin@unibas.ch",
+            password="test-password",
+            role=User.Role.ADMINISTRATOR,
+        )
+        self.course_a = Course.objects.create(
+            title="Landing Course A",
+            created_by=self.supervisor_owner,
+        )
+        self.course_b = Course.objects.create(
+            title="Landing Course B",
+            created_by=self.administrator,
+        )
+        self.course_a.supervisors.add(self.shared_supervisor)
+
+    def test_student_cannot_access_supervisor_landing_or_summary_list(self):
+        self.client.force_login(self.student)
+        landing_response = self.client.get(reverse("supervisor_landing"))
+        summary_list_response = self.client.get(reverse("supervisor_course_summary_list"))
+        self.assertEqual(landing_response.status_code, 403)
+        self.assertEqual(summary_list_response.status_code, 403)
+
+    def test_supervisor_landing_contains_required_navigation_links(self):
+        self.client.force_login(self.supervisor_owner)
+        response = self.client.get(reverse("supervisor_landing"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, reverse("home"))
+        self.assertContains(response, reverse("supervisor_course_summary_list"))
+        self.assertContains(response, "/admin/")
+
+    def test_supervisor_pages_show_only_accessible_courses_for_supervisor(self):
+        self.client.force_login(self.shared_supervisor)
+        landing_response = self.client.get(reverse("supervisor_landing"))
+        summary_list_response = self.client.get(reverse("supervisor_course_summary_list"))
+
+        self.assertContains(landing_response, "Landing Course A")
+        self.assertNotContains(landing_response, "Landing Course B")
+        self.assertContains(summary_list_response, "Landing Course A")
+        self.assertNotContains(summary_list_response, "Landing Course B")
+
+    def test_administrator_can_access_supervisor_pages_and_see_all_courses(self):
+        self.client.force_login(self.administrator)
+        landing_response = self.client.get(reverse("supervisor_landing"))
+        summary_list_response = self.client.get(reverse("supervisor_course_summary_list"))
+        self.assertEqual(landing_response.status_code, 200)
+        self.assertEqual(summary_list_response.status_code, 200)
+        self.assertContains(landing_response, "Landing Course A")
+        self.assertContains(landing_response, "Landing Course B")
+        self.assertContains(summary_list_response, "Landing Course A")
+        self.assertContains(summary_list_response, "Landing Course B")
+
+    def test_unrelated_supervisor_only_sees_courses_they_supervise(self):
+        self.client.force_login(self.unrelated_supervisor)
+        landing_response = self.client.get(reverse("supervisor_landing"))
+        summary_list_response = self.client.get(reverse("supervisor_course_summary_list"))
+        self.assertEqual(landing_response.status_code, 200)
+        self.assertEqual(summary_list_response.status_code, 200)
+        self.assertContains(landing_response, "No accessible courses.")
+        self.assertContains(summary_list_response, "No accessible courses.")

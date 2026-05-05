@@ -33,6 +33,12 @@ def _user_can_access_course(user, course):
     return course.supervisors.filter(id=user.id).exists()
 
 
+def _courses_accessible_to_supervisor_or_admin(user):
+    if user.is_superuser or user.role == User.Role.ADMINISTRATOR:
+        return Course.objects.all().order_by("title")
+    return Course.objects.filter(supervisors=user).order_by("title")
+
+
 class CourseListView(LoginRequiredMixin, ListView):
     model = Course
     template_name = "core/course_list.html"
@@ -40,6 +46,30 @@ class CourseListView(LoginRequiredMixin, ListView):
 
     def get_queryset(self):
         return Course.objects.filter(is_active=True).order_by("title")
+
+
+class SupervisorLandingView(SupervisorRequiredMixin, View):
+    template_name = "core/supervisor_landing.html"
+
+    def get(self, request):
+        courses = _courses_accessible_to_supervisor_or_admin(request.user)
+        return render(
+            request,
+            self.template_name,
+            {"courses": courses},
+        )
+
+
+class SupervisorCourseSummaryListView(SupervisorRequiredMixin, View):
+    template_name = "core/supervisor_course_summary_list.html"
+
+    def get(self, request):
+        courses = _courses_accessible_to_supervisor_or_admin(request.user)
+        return render(
+            request,
+            self.template_name,
+            {"courses": courses},
+        )
 
 
 class CourseDetailView(LoginRequiredMixin, DetailView):
