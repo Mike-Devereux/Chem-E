@@ -1,10 +1,11 @@
+from django.contrib import admin
 from django.core.exceptions import ValidationError
 from django.core import mail
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.files.storage import default_storage
 from django.db import IntegrityError
 from django.http import HttpResponse
-from django.test import TestCase, override_settings
+from django.test import RequestFactory, TestCase, override_settings
 from django.urls import path, reverse
 from django.views import View
 import os
@@ -626,6 +627,12 @@ class Phase3SupervisorAdminTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'name="role"', html=False)
 
+    def test_administrator_can_view_users_in_admin(self):
+        self.client.force_login(self.administrator)
+        response = self.client.get(reverse("admin:core_user_changelist"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, self.student.email)
+
     def test_supervisor_cannot_change_user_role_or_deactivate_user(self):
         self.client.force_login(self.supervisor_a)
         change_url = reverse("admin:core_user_change", args=[self.student.id])
@@ -643,12 +650,57 @@ class Phase3SupervisorAdminTests(TestCase):
         self.assertEqual(self.student.role, User.Role.STUDENT)
         self.assertTrue(self.student.is_active)
 
+    def test_supervisor_cannot_modify_users_via_admin_endpoints(self):
+        self.client.force_login(self.supervisor_a)
+        response = self.client.post(
+            reverse("admin:core_user_change", args=[self.student.id]),
+            {
+                "email": self.student.email,
+                "password": self.student.password,
+                "role": User.Role.ADMINISTRATOR,
+                "_save": "Save",
+            },
+        )
+        self.assertEqual(response.status_code, 403)
+        self.student.refresh_from_db()
+        self.assertEqual(self.student.role, User.Role.STUDENT)
+
     def test_administrator_can_access_user_active_flag_in_admin(self):
         self.client.force_login(self.administrator)
         change_url = reverse("admin:core_user_change", args=[self.student.id])
         response = self.client.get(change_url)
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'name="is_active"', html=False)
+
+    def test_administrator_can_change_user_role_and_persist(self):
+        model_admin = admin.site._registry[User]
+        request = RequestFactory().post("/")
+        request.user = self.administrator
+        target_user = User.objects.get(pk=self.student.id)
+
+        form_class = model_admin.get_form(request, obj=target_user)
+        initial_data = form_class(instance=target_user).initial
+        form_data = {
+            **initial_data,
+            "email": target_user.email,
+            "password": target_user.password,
+            "role": User.Role.SUPERVISOR,
+            "date_joined_0": target_user.date_joined.strftime("%Y-%m-%d"),
+            "date_joined_1": target_user.date_joined.strftime("%H:%M:%S"),
+            "groups": [],
+            "user_permissions": [],
+        }
+        form = form_class(
+            data=form_data,
+            instance=target_user,
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+        updated_user = form.save(commit=False)
+        model_admin.save_model(request, updated_user, form, change=True)
+        form.save_m2m()
+
+        target_user.refresh_from_db()
+        self.assertEqual(target_user.role, User.Role.SUPERVISOR)
 
     def test_administrator_sees_admin_password_change_link_for_user(self):
         self.client.force_login(self.administrator)

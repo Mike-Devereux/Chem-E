@@ -152,9 +152,9 @@ class UserAdmin(BaseUserAdmin):
 
 @admin.register(Course)
 class CourseAdmin(SupervisorOwnedContentAdmin):
-    list_display = ("title", "created_by", "is_active", "created_at")
-    list_filter = ("is_active", "created_at")
-    search_fields = ("title", "description", "created_by__email")
+    list_display = ("title", "created_by", "is_active")
+    list_filter = ("is_active",)
+    search_fields = ("title", "created_by__email")
     ordering = ("title",)
     inlines = (TutorialInline,)
 
@@ -176,9 +176,9 @@ class CourseAdmin(SupervisorOwnedContentAdmin):
 
 @admin.register(Tutorial)
 class TutorialAdmin(SupervisorOwnedContentAdmin):
-    list_display = ("title", "course", "order_index", "is_active", "created_at")
+    list_display = ("title", "course")
     list_filter = ("is_active", "course")
-    search_fields = ("title", "description", "course__title", "course__created_by__email")
+    search_fields = ("title", "course__title", "course__created_by__email")
     ordering = ("course", "order_index", "title")
     inlines = (ExerciseInline,)
 
@@ -203,11 +203,9 @@ class ExerciseAdmin(SupervisorOwnedContentAdmin):
         "exercise_type",
         "order_index",
         "active_unlocked_status",
-        "created_at",
-        "updated_at",
     )
     list_filter = ("is_active", "exercise_type", "tutorial", "tutorial__course")
-    search_fields = ("title", "tutorial__title", "tutorial__course__title", "tutorial__course__created_by__email")
+    search_fields = ("title", "tutorial__title", "tutorial__course__title")
     ordering = ("tutorial", "order_index", "title")
     inlines = (ExerciseVariantInline,)
 
