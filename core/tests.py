@@ -1545,3 +1545,306 @@ class SupervisorGradingWorkflowTests(TestCase):
         self.assertEqual(str(upload_result.score), "0.00")
         self.assertFalse(upload_result.is_manually_graded)
         self.assertIsNone(upload_result.graded_by)
+
+
+class SupervisorCourseSummaryAccessTests(TestCase):
+    def setUp(self):
+        self.student = User.objects.create_user(
+            email="summary_student@unibas.ch",
+            password="test-password",
+            role=User.Role.STUDENT,
+        )
+        self.course_owner = User.objects.create_user(
+            email="summary_owner@unibas.ch",
+            password="test-password",
+            role=User.Role.SUPERVISOR,
+        )
+        self.shared_supervisor = User.objects.create_user(
+            email="summary_shared_supervisor@unibas.ch",
+            password="test-password",
+            role=User.Role.SUPERVISOR,
+        )
+        self.unrelated_supervisor = User.objects.create_user(
+            email="summary_unrelated_supervisor@unibas.ch",
+            password="test-password",
+            role=User.Role.SUPERVISOR,
+        )
+        self.administrator = User.objects.create_user(
+            email="summary_admin@unibas.ch",
+            password="test-password",
+            role=User.Role.ADMINISTRATOR,
+        )
+        self.course = Course.objects.create(
+            title="Summary Access Course",
+            created_by=self.course_owner,
+        )
+        self.course.supervisors.add(self.shared_supervisor)
+        self.tutorial = Tutorial.objects.create(
+            course=self.course,
+            title="Summary Tutorial",
+            order_index=1,
+        )
+        self.exercise = Exercise.objects.create(
+            tutorial=self.tutorial,
+            title="Summary Exercise",
+            order_index=1,
+            exercise_type=Exercise.ExerciseType.NUMERICAL,
+            is_active=True,
+        )
+        self.variant = ExerciseVariant.objects.create(
+            exercise=self.exercise,
+            exercise_text="Summary variant",
+            reference_solution="1.0000",
+            absolute_tolerance="0.1000",
+            available_points="1.00",
+        )
+        Result.objects.create(
+            student=self.student,
+            course=self.course,
+            tutorial=self.tutorial,
+            exercise=self.exercise,
+            assigned_variant=self.variant,
+            submitted_numerical_value="1.0000",
+            is_correct=True,
+            score="1.00",
+            is_manually_graded=True,
+        )
+
+    def test_course_owner_supervisor_can_access_course_summary(self):
+        self.client.force_login(self.course_owner)
+        response = self.client.get(reverse("supervisor_course_summary", args=[self.course.id]))
+        self.assertEqual(response.status_code, 200)
+
+    def test_shared_supervisor_can_access_course_summary(self):
+        self.client.force_login(self.shared_supervisor)
+        response = self.client.get(reverse("supervisor_course_summary", args=[self.course.id]))
+        self.assertEqual(response.status_code, 200)
+
+    def test_unrelated_supervisor_cannot_access_course_summary(self):
+        self.client.force_login(self.unrelated_supervisor)
+        response = self.client.get(reverse("supervisor_course_summary", args=[self.course.id]))
+        self.assertEqual(response.status_code, 403)
+
+    def test_administrator_can_access_course_summary(self):
+        self.client.force_login(self.administrator)
+        response = self.client.get(reverse("supervisor_course_summary", args=[self.course.id]))
+        self.assertEqual(response.status_code, 200)
+
+    def test_student_cannot_access_course_summary(self):
+        self.client.force_login(self.student)
+        response = self.client.get(reverse("supervisor_course_summary", args=[self.course.id]))
+        self.assertEqual(response.status_code, 403)
+
+
+class SupervisorCourseSummaryViewTests(TestCase):
+    def setUp(self):
+        self.owner_supervisor = User.objects.create_user(
+            email="summary_owner_view@unibas.ch",
+            password="test-password",
+            role=User.Role.SUPERVISOR,
+        )
+        self.shared_supervisor = User.objects.create_user(
+            email="summary_shared_view@unibas.ch",
+            password="test-password",
+            role=User.Role.SUPERVISOR,
+        )
+        self.unrelated_supervisor = User.objects.create_user(
+            email="summary_unrelated_view@unibas.ch",
+            password="test-password",
+            role=User.Role.SUPERVISOR,
+        )
+        self.administrator = User.objects.create_user(
+            email="summary_admin_view@unibas.ch",
+            password="test-password",
+            role=User.Role.ADMINISTRATOR,
+        )
+        self.student_a = User.objects.create_user(
+            email="summary_student_a@unibas.ch",
+            password="test-password",
+            role=User.Role.STUDENT,
+        )
+        self.student_b = User.objects.create_user(
+            email="summary_student_b@unibas.ch",
+            password="test-password",
+            role=User.Role.STUDENT,
+        )
+
+        self.course = Course.objects.create(
+            title="Summary Matrix Course",
+            created_by=self.owner_supervisor,
+        )
+        self.course.supervisors.add(self.shared_supervisor)
+
+        self.tutorial_1 = Tutorial.objects.create(
+            course=self.course,
+            title="Tutorial 1",
+            order_index=1,
+        )
+        self.tutorial_2 = Tutorial.objects.create(
+            course=self.course,
+            title="Tutorial 2",
+            order_index=2,
+        )
+
+        self.exercise_1 = Exercise.objects.create(
+            tutorial=self.tutorial_1,
+            title="Exercise 1",
+            order_index=1,
+            exercise_type=Exercise.ExerciseType.NUMERICAL,
+            is_active=True,
+        )
+        self.exercise_2 = Exercise.objects.create(
+            tutorial=self.tutorial_1,
+            title="Exercise 2",
+            order_index=2,
+            exercise_type=Exercise.ExerciseType.DOCUMENT_UPLOAD,
+            is_active=True,
+        )
+        self.exercise_3 = Exercise.objects.create(
+            tutorial=self.tutorial_2,
+            title="Exercise 3",
+            order_index=1,
+            exercise_type=Exercise.ExerciseType.NUMERICAL,
+            is_active=True,
+        )
+
+        self.variant_1 = ExerciseVariant.objects.create(
+            exercise=self.exercise_1,
+            exercise_text="Variant 1",
+            reference_solution="1.0000",
+            absolute_tolerance="0.1000",
+            available_points="5.00",
+        )
+        self.variant_2 = ExerciseVariant.objects.create(
+            exercise=self.exercise_2,
+            exercise_text="Variant 2",
+            available_points="6.00",
+        )
+        self.variant_3 = ExerciseVariant.objects.create(
+            exercise=self.exercise_3,
+            exercise_text="Variant 3",
+            reference_solution="2.0000",
+            absolute_tolerance="0.1000",
+            available_points="7.00",
+        )
+
+        Result.objects.create(
+            student=self.student_a,
+            course=self.course,
+            tutorial=self.tutorial_1,
+            exercise=self.exercise_1,
+            assigned_variant=self.variant_1,
+            submitted_numerical_value="1.0000",
+            is_correct=True,
+            score="5.00",
+            is_manually_graded=True,
+        )
+        Result.objects.create(
+            student=self.student_a,
+            course=self.course,
+            tutorial=self.tutorial_1,
+            exercise=self.exercise_2,
+            assigned_variant=self.variant_2,
+            uploaded_file=SimpleUploadedFile("pending.pdf", b"pending"),
+            score="0.00",
+            is_manually_graded=False,
+        )
+        Result.objects.create(
+            student=self.student_a,
+            course=self.course,
+            tutorial=self.tutorial_2,
+            exercise=self.exercise_3,
+            assigned_variant=self.variant_3,
+            submitted_numerical_value="2.0000",
+            is_correct=True,
+            score="7.00",
+            is_manually_graded=True,
+        )
+        Result.objects.create(
+            student=self.student_b,
+            course=self.course,
+            tutorial=self.tutorial_1,
+            exercise=self.exercise_1,
+            assigned_variant=self.variant_1,
+            submitted_numerical_value="0.9500",
+            is_correct=True,
+            score="4.00",
+            is_manually_graded=True,
+        )
+
+    def test_summary_shows_expected_scores_and_missing_cells_in_context(self):
+        self.client.force_login(self.owner_supervisor)
+        response = self.client.get(reverse("supervisor_course_summary", args=[self.course.id]))
+        self.assertEqual(response.status_code, 200)
+
+        exercises = response.context["exercises"]
+        exercise_ids = [exercise.id for exercise in exercises]
+        self.assertEqual(exercise_ids, [self.exercise_1.id, self.exercise_2.id, self.exercise_3.id])
+
+        rows_by_student_id = {
+            row["student"].id: row["cells"] for row in response.context["summary_rows"]
+        }
+        student_a_cells = rows_by_student_id[self.student_a.id]
+        student_b_cells = rows_by_student_id[self.student_b.id]
+
+        self.assertEqual(str(student_a_cells[0].score), "5.00")
+        self.assertFalse(student_a_cells[1].is_manually_graded)
+        self.assertEqual(str(student_a_cells[2].score), "7.00")
+
+        self.assertEqual(str(student_b_cells[0].score), "4.00")
+        self.assertIsNone(student_b_cells[1])
+        self.assertIsNone(student_b_cells[2])
+
+        self.assertContains(response, "5.00")
+        self.assertContains(response, "4.00")
+        self.assertContains(response, "7.00")
+        self.assertContains(response, "Ungraded")
+
+    def test_filtering_by_tutorial_limits_exercises_and_results(self):
+        self.client.force_login(self.owner_supervisor)
+        response = self.client.get(
+            reverse("supervisor_course_summary", args=[self.course.id]),
+            {"tutorial_id": str(self.tutorial_1.id)},
+        )
+        self.assertEqual(response.status_code, 200)
+
+        exercise_ids = [exercise.id for exercise in response.context["exercises"]]
+        self.assertEqual(exercise_ids, [self.exercise_1.id, self.exercise_2.id])
+
+        rows_by_student_id = {
+            row["student"].id: row["cells"] for row in response.context["summary_rows"]
+        }
+        self.assertEqual(len(rows_by_student_id[self.student_a.id]), 2)
+        self.assertEqual(len(rows_by_student_id[self.student_b.id]), 2)
+        self.assertEqual(str(rows_by_student_id[self.student_a.id][0].score), "5.00")
+        self.assertFalse(rows_by_student_id[self.student_a.id][1].is_manually_graded)
+
+    def test_filtering_by_student_shows_only_selected_student_row(self):
+        self.client.force_login(self.owner_supervisor)
+        response = self.client.get(
+            reverse("supervisor_course_summary", args=[self.course.id]),
+            {"student_id": str(self.student_b.id)},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.context["summary_rows"]), 1)
+        self.assertEqual(response.context["summary_rows"][0]["student"].id, self.student_b.id)
+        self.assertContains(response, f"<th>{self.student_b.email}</th>", html=True)
+        self.assertNotContains(response, f"<th>{self.student_a.email}</th>", html=True)
+
+    def test_access_control_for_summary_endpoint(self):
+        summary_url = reverse("supervisor_course_summary", args=[self.course.id])
+
+        self.client.force_login(self.owner_supervisor)
+        self.assertEqual(self.client.get(summary_url).status_code, 200)
+
+        self.client.force_login(self.shared_supervisor)
+        self.assertEqual(self.client.get(summary_url).status_code, 200)
+
+        self.client.force_login(self.unrelated_supervisor)
+        self.assertEqual(self.client.get(summary_url).status_code, 403)
+
+        self.client.force_login(self.administrator)
+        self.assertEqual(self.client.get(summary_url).status_code, 200)
+
+        self.client.force_login(self.student_a)
+        self.assertEqual(self.client.get(summary_url).status_code, 403)

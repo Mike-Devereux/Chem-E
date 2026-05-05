@@ -323,30 +323,32 @@ class SupervisorCourseSummaryView(SupervisorRequiredMixin, DetailView):
             )
         )
         exercise_ids = [exercise.id for exercise in exercises]
-        results = list(
+        all_results = list(
             Result.objects.filter(course=self.object, exercise_id__in=exercise_ids)
-            .select_related("student", "exercise", "tutorial", "assigned_variant")
+            .select_related("student")
             .order_by("-submitted_at", "-id")
         )
-        students = sorted({result.student for result in results}, key=lambda student: student.email)
+        all_students = sorted({result.student for result in all_results}, key=lambda student: student.email)
         selected_student = None
         selected_student_id_raw = self.request.GET.get("student_id")
         if selected_student_id_raw:
             try:
                 selected_student = next(
-                    student for student in students if student.id == int(selected_student_id_raw)
+                    student for student in all_students if student.id == int(selected_student_id_raw)
                 )
             except (StopIteration, ValueError):
                 selected_student = None
-        if selected_student:
-            students = [selected_student]
+        students = [selected_student] if selected_student else all_students
+        results = (
+            [result for result in all_results if result.student_id == selected_student.id]
+            if selected_student
+            else all_results
+        )
 
         results_by_student_exercise = {
             student.id: {exercise.id: None for exercise in exercises} for student in students
         }
         for result in results:
-            if selected_student and result.student_id != selected_student.id:
-                continue
             student_results = results_by_student_exercise.setdefault(result.student_id, {})
             student_results[result.exercise_id] = result
 
@@ -364,10 +366,7 @@ class SupervisorCourseSummaryView(SupervisorRequiredMixin, DetailView):
         context["tutorials"] = tutorials
         context["selected_tutorial"] = selected_tutorial
         context["selected_tutorial_id"] = str(selected_tutorial.id) if selected_tutorial else ""
-        context["all_students"] = sorted(
-            {result.student for result in results},
-            key=lambda student: student.email,
-        )
+        context["all_students"] = all_students
         context["selected_student"] = selected_student
         context["selected_student_id"] = str(selected_student.id) if selected_student else ""
         return context
