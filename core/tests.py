@@ -1,4 +1,5 @@
 from django.core.exceptions import ValidationError
+from django.core import mail
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.files.storage import default_storage
 from django.db import IntegrityError
@@ -382,6 +383,40 @@ class Phase3SupervisorAdminTests(TestCase):
 
         self.course_a = Course.objects.create(title="Supervisor A Course", created_by=self.supervisor_a)
         self.course_b = Course.objects.create(title="Supervisor B Course", created_by=self.supervisor_b)
+        self.tutorial_a = Tutorial.objects.create(
+            course=self.course_a,
+            title="Tutorial A",
+            order_index=1,
+        )
+        self.tutorial_b = Tutorial.objects.create(
+            course=self.course_b,
+            title="Tutorial B",
+            order_index=1,
+        )
+        self.exercise_a = Exercise.objects.create(
+            tutorial=self.tutorial_a,
+            title="Exercise A",
+            order_index=1,
+            exercise_type=Exercise.ExerciseType.NUMERICAL,
+        )
+        self.exercise_b = Exercise.objects.create(
+            tutorial=self.tutorial_b,
+            title="Exercise B",
+            order_index=1,
+            exercise_type=Exercise.ExerciseType.DOCUMENT_UPLOAD,
+        )
+        self.variant_a = ExerciseVariant.objects.create(
+            exercise=self.exercise_a,
+            exercise_text="Variant A text",
+            reference_solution="1.0000",
+            absolute_tolerance="0.1000",
+            available_points="2.00",
+        )
+        self.variant_b = ExerciseVariant.objects.create(
+            exercise=self.exercise_b,
+            exercise_text="Variant B text",
+            available_points="3.00",
+        )
 
     def test_student_cannot_access_django_admin(self):
         self.client.force_login(self.student)
@@ -453,6 +488,125 @@ class Phase3SupervisorAdminTests(TestCase):
         self.course_b.refresh_from_db()
         self.assertEqual(self.course_b.title, "Supervisor B Course Updated")
 
+    def test_administrator_can_view_and_edit_all_tutorials_exercises_and_variants(self):
+        self.client.force_login(self.administrator)
+
+        tutorial_list_response = self.client.get(reverse("admin:core_tutorial_changelist"))
+        self.assertContains(tutorial_list_response, "Tutorial A")
+        self.assertContains(tutorial_list_response, "Tutorial B")
+        tutorial_change_response = self.client.get(
+            reverse("admin:core_tutorial_change", args=[self.tutorial_b.id])
+        )
+        self.assertEqual(tutorial_change_response.status_code, 200)
+
+        exercise_list_response = self.client.get(reverse("admin:core_exercise_changelist"))
+        self.assertContains(exercise_list_response, "Exercise A")
+        self.assertContains(exercise_list_response, "Exercise B")
+        exercise_change_response = self.client.get(
+            reverse("admin:core_exercise_change", args=[self.exercise_b.id])
+        )
+        self.assertEqual(exercise_change_response.status_code, 200)
+
+        variant_list_response = self.client.get(reverse("admin:core_exercisevariant_changelist"))
+        self.assertContains(variant_list_response, "Tutorial A - Exercise A")
+        self.assertContains(variant_list_response, "Tutorial B - Exercise B")
+        variant_change_response = self.client.get(
+            reverse("admin:core_exercisevariant_change", args=[self.variant_b.id])
+        )
+        self.assertEqual(variant_change_response.status_code, 200)
+
+    def test_supervisor_remains_restricted_from_other_course_tutorials_exercises_and_variants(self):
+        self.client.force_login(self.supervisor_a)
+
+        tutorial_list_response = self.client.get(reverse("admin:core_tutorial_changelist"))
+        self.assertContains(tutorial_list_response, "Tutorial A")
+        self.assertNotContains(tutorial_list_response, "Tutorial B")
+        tutorial_change_response = self.client.get(
+            reverse("admin:core_tutorial_change", args=[self.tutorial_b.id])
+        )
+        self.assertEqual(tutorial_change_response.status_code, 302)
+
+        exercise_list_response = self.client.get(reverse("admin:core_exercise_changelist"))
+        self.assertContains(exercise_list_response, "Exercise A")
+        self.assertNotContains(exercise_list_response, "Exercise B")
+        exercise_change_response = self.client.get(
+            reverse("admin:core_exercise_change", args=[self.exercise_b.id])
+        )
+        self.assertEqual(exercise_change_response.status_code, 302)
+
+        variant_list_response = self.client.get(reverse("admin:core_exercisevariant_changelist"))
+        self.assertContains(variant_list_response, "Tutorial A - Exercise A")
+        self.assertNotContains(variant_list_response, "Tutorial B - Exercise B")
+        variant_change_response = self.client.get(
+            reverse("admin:core_exercisevariant_change", args=[self.variant_b.id])
+        )
+        self.assertEqual(variant_change_response.status_code, 302)
+
+    def test_admin_delete_confirmation_page_is_shown_for_course(self):
+        self.client.force_login(self.administrator)
+        response = self.client.get(reverse("admin:core_course_delete", args=[self.course_b.id]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Are you sure")
+        self.assertContains(response, "Supervisor B Course")
+
+    def test_administrator_can_delete_course_and_cascade_related_content(self):
+        self.client.force_login(self.administrator)
+        response = self.client.post(
+            reverse("admin:core_course_delete", args=[self.course_b.id]),
+            {"post": "yes"},
+        )
+        self.assertEqual(response.status_code, 302)
+
+        self.assertFalse(Course.objects.filter(id=self.course_b.id).exists())
+        self.assertFalse(Tutorial.objects.filter(id=self.tutorial_b.id).exists())
+        self.assertFalse(Exercise.objects.filter(id=self.exercise_b.id).exists())
+        self.assertFalse(ExerciseVariant.objects.filter(id=self.variant_b.id).exists())
+
+        # Unrelated course data must remain untouched.
+        self.assertTrue(Course.objects.filter(id=self.course_a.id).exists())
+        self.assertTrue(Tutorial.objects.filter(id=self.tutorial_a.id).exists())
+        self.assertTrue(Exercise.objects.filter(id=self.exercise_a.id).exists())
+        self.assertTrue(ExerciseVariant.objects.filter(id=self.variant_a.id).exists())
+
+    def test_administrator_can_delete_tutorial_and_cascade_exercises_and_variants(self):
+        self.client.force_login(self.administrator)
+        response = self.client.post(
+            reverse("admin:core_tutorial_delete", args=[self.tutorial_b.id]),
+            {"post": "yes"},
+        )
+        self.assertEqual(response.status_code, 302)
+
+        self.assertFalse(Tutorial.objects.filter(id=self.tutorial_b.id).exists())
+        self.assertFalse(Exercise.objects.filter(id=self.exercise_b.id).exists())
+        self.assertFalse(ExerciseVariant.objects.filter(id=self.variant_b.id).exists())
+        self.assertTrue(Course.objects.filter(id=self.course_b.id).exists())
+        self.assertTrue(Tutorial.objects.filter(id=self.tutorial_a.id).exists())
+
+    def test_administrator_can_delete_exercise_and_cascade_variants_only_for_that_exercise(self):
+        self.client.force_login(self.administrator)
+        response = self.client.post(
+            reverse("admin:core_exercise_delete", args=[self.exercise_b.id]),
+            {"post": "yes"},
+        )
+        self.assertEqual(response.status_code, 302)
+
+        self.assertFalse(Exercise.objects.filter(id=self.exercise_b.id).exists())
+        self.assertFalse(ExerciseVariant.objects.filter(id=self.variant_b.id).exists())
+        self.assertTrue(Exercise.objects.filter(id=self.exercise_a.id).exists())
+        self.assertTrue(ExerciseVariant.objects.filter(id=self.variant_a.id).exists())
+
+    def test_administrator_can_delete_single_variant_without_affecting_other_content(self):
+        self.client.force_login(self.administrator)
+        response = self.client.post(
+            reverse("admin:core_exercisevariant_delete", args=[self.variant_b.id]),
+            {"post": "yes"},
+        )
+        self.assertEqual(response.status_code, 302)
+
+        self.assertFalse(ExerciseVariant.objects.filter(id=self.variant_b.id).exists())
+        self.assertTrue(Exercise.objects.filter(id=self.exercise_b.id).exists())
+        self.assertTrue(ExerciseVariant.objects.filter(id=self.variant_a.id).exists())
+
     def test_shared_supervisor_can_access_shared_course_in_admin(self):
         self.course_a.supervisors.add(self.supervisor_c)
         self.client.force_login(self.supervisor_c)
@@ -495,6 +649,21 @@ class Phase3SupervisorAdminTests(TestCase):
         response = self.client.get(change_url)
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'name="is_active"', html=False)
+
+    def test_administrator_sees_admin_password_change_link_for_user(self):
+        self.client.force_login(self.administrator)
+        response = self.client.get(reverse("admin:core_user_change", args=[self.student.id]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "../password/")
+
+    def test_user_can_request_password_reset_via_email(self):
+        response = self.client.post(
+            reverse("password_reset"),
+            {"email": self.student.email},
+        )
+        self.assertRedirects(response, reverse("password_reset_done"))
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn(self.student.email, mail.outbox[0].to)
 
 
 class ExerciseVariantAssignmentTests(TestCase):

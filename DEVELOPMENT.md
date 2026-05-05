@@ -52,6 +52,10 @@ git push -u origin main
 ```
 - Each time cursor is restarted, use the files SPEC.md, TODO.md and DECISIONS.md to record the context required by the AI
 - Password reset emails use Django's console email backend in development, so reset links are printed in the terminal running `python manage.py runserver`.
+- Password reset behavior uses Django built-ins only:
+  - user-requested reset via `/password-reset/` (email link workflow),
+  - admin-triggered reset via Django admin user change page ("change password").
+- No custom password reset logic is implemented in this project.
 - Load the context by starting the first prompt with something like:
 
 > Read SPEC.md, TODO.md, DECISIONS.md and the current Django project structure.
