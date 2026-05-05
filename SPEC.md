@@ -141,24 +141,30 @@ An exercise has:
 
 Each exercise can have multiple alternative versions of the exercise text.
 
-Each variant has:
+Each variant consists of one or more exercise parts.
 
+Each variant has:
 * unique ID;
 * exercise ID;
-* exercise text;
+* optional shared text or description;
 * optional images;
-* reference solution, if numerical;
-* optional grading tolerance, if numerical;
-* available points, for correct answer;
-* optional notes for supervisors.
 
-When a student starts an exercise, the system randomly assigns one variant of that exercise to that student.
+Each variant contains multiple ExerciseParts.
 
-The assigned variant must be stored permanently for that student/exercise attempt, so that:
+### 5.1 Exercise parts
 
-* the same student sees the same variant when returning to the exercise;
-* supervisors know which variant the student answered;
-* grading uses the correct reference solution.
+Each ExerciseVariant consists of one or more ExerciseParts.
+
+Each part has:
+* label (e.g. "a", "b", "c", "d");
+* ordering within the variant;
+* prompt text;
+* answer type (initially numerical; later possibly document upload);
+* reference solution (if numerical);
+* tolerance (if numerical);
+* available points;
+
+The total score for an ExerciseVariant is the sum of the points of its parts.
 
 ## 6. Exercise answer types
 
@@ -166,8 +172,11 @@ The assigned variant must be stored permanently for that student/exercise attemp
 
 For numerical-answer exercises:
 
-* the student enters a number;
-* the supervisor provides a reference answer per variant;
+* the student enters one value per ExercisePart;
+* each part is checked independently against its reference solution;
+* correctness is determined per part;
+* scores are assigned per part and summed;
+* the supervisor provides a reference answer per ExercisePart;
 * the system automatically checks the submitted answer against the reference answer;
 * the result is stored immediately.
 
@@ -271,6 +280,17 @@ Administrators should be able to do the same as supervisors, plus additionally:
 
 Each student submission creates or updates a result record.
 
+Each Result consists of one or more ResultParts.
+
+Each ResultPart corresponds to one ExercisePart and stores:
+* submitted value;
+* correctness;
+* score;
+* submission timestamp;
+* uploaded file reference, if applicable;
+
+The total Result score is the sum of the scores of its ResultParts.
+
 A result record should include:
 
 * unique ID;
@@ -279,10 +299,7 @@ A result record should include:
 * tutorial ID;
 * exercise ID;
 * assigned variant ID;
-* answer type;
-* submitted numerical value, if applicable;
-* uploaded file reference, if applicable;
-* score;
+* total score;
 * correctness status;
 * manual grading status;
 * feedback, optional;
