@@ -461,6 +461,41 @@ class Phase3SupervisorAdminTests(TestCase):
         change_response = self.client.get(reverse("admin:core_course_change", args=[self.course_a.id]))
         self.assertEqual(change_response.status_code, 200)
 
+    def test_supervisor_cannot_access_user_admin(self):
+        self.client.force_login(self.supervisor_a)
+        response = self.client.get(reverse("admin:core_user_changelist"))
+        self.assertEqual(response.status_code, 403)
+
+    def test_administrator_can_access_user_role_field_in_admin(self):
+        self.client.force_login(self.administrator)
+        response = self.client.get(reverse("admin:core_user_change", args=[self.student.id]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'name="role"', html=False)
+
+    def test_supervisor_cannot_change_user_role_or_deactivate_user(self):
+        self.client.force_login(self.supervisor_a)
+        change_url = reverse("admin:core_user_change", args=[self.student.id])
+        post_response = self.client.post(
+            change_url,
+            {
+                "email": self.student.email,
+                "password": self.student.password,
+                "role": User.Role.SUPERVISOR,
+                "_save": "Save",
+            },
+        )
+        self.assertEqual(post_response.status_code, 403)
+        self.student.refresh_from_db()
+        self.assertEqual(self.student.role, User.Role.STUDENT)
+        self.assertTrue(self.student.is_active)
+
+    def test_administrator_can_access_user_active_flag_in_admin(self):
+        self.client.force_login(self.administrator)
+        change_url = reverse("admin:core_user_change", args=[self.student.id])
+        response = self.client.get(change_url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'name="is_active"', html=False)
+
 
 class ExerciseVariantAssignmentTests(TestCase):
     def setUp(self):
@@ -1903,6 +1938,12 @@ class SupervisorCourseArchiveResultsViewTests(TestCase):
             order_index=1,
             exercise_type=Exercise.ExerciseType.DOCUMENT_UPLOAD,
         )
+        self.numerical_exercise = Exercise.objects.create(
+            tutorial=self.tutorial,
+            title="Archive Numerical Exercise",
+            order_index=2,
+            exercise_type=Exercise.ExerciseType.NUMERICAL,
+        )
         self.other_exercise = Exercise.objects.create(
             tutorial=self.other_tutorial,
             title="Archive Other Exercise",
@@ -1921,6 +1962,13 @@ class SupervisorCourseArchiveResultsViewTests(TestCase):
             absolute_tolerance="0.1000",
             available_points="1.00",
         )
+        self.numerical_variant = ExerciseVariant.objects.create(
+            exercise=self.numerical_exercise,
+            exercise_text="Archive numerical variant",
+            reference_solution="2.0000",
+            absolute_tolerance="0.1000",
+            available_points="2.00",
+        )
         self.current_result = Result.objects.create(
             student=self.student,
             course=self.course,
@@ -1929,6 +1977,18 @@ class SupervisorCourseArchiveResultsViewTests(TestCase):
             assigned_variant=self.variant,
             uploaded_file=SimpleUploadedFile("archive-target.pdf", b"archive target"),
             is_manually_graded=False,
+            is_archived=False,
+        )
+        self.current_numerical_result = Result.objects.create(
+            student=self.other_student,
+            course=self.course,
+            tutorial=self.tutorial,
+            exercise=self.numerical_exercise,
+            assigned_variant=self.numerical_variant,
+            submitted_numerical_value="2.0000",
+            is_correct=True,
+            score="2.00",
+            is_manually_graded=True,
             is_archived=False,
         )
         self.other_course_result = Result.objects.create(
@@ -1950,7 +2010,7 @@ class SupervisorCourseArchiveResultsViewTests(TestCase):
             reverse("supervisor_course_archive_results", args=[self.course.id])
         )
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Current (unarchived) results in this course: 1")
+        self.assertContains(response, "Current (unarchived) results in this course: 2")
         self.assertContains(response, 'name="note"', html=False)
 
     def test_post_archives_only_current_results_for_selected_course(self):
@@ -1967,11 +2027,14 @@ class SupervisorCourseArchiveResultsViewTests(TestCase):
         self.assertEqual(ArchiveBatch.objects.filter(course=self.course).count(), 1)
         batch = ArchiveBatch.objects.get(course=self.course)
         self.current_result.refresh_from_db()
+        self.current_numerical_result.refresh_from_db()
         self.other_course_result.refresh_from_db()
 
         self.assertEqual(self.current_result.archive_batch_id, batch.id)
+        self.assertEqual(self.current_numerical_result.archive_batch_id, batch.id)
         self.assertEqual(batch.note, "Spring 2026 Tutorial 1")
         self.assertTrue(self.current_result.is_archived)
+        self.assertTrue(self.current_numerical_result.is_archived)
         self.assertTrue(bool(self.current_result.uploaded_file))
         self.assertIsNone(self.other_course_result.archive_batch)
         self.assertFalse(self.other_course_result.is_archived)
@@ -1990,6 +2053,16 @@ class SupervisorCourseArchiveResultsViewTests(TestCase):
 
         self.client.force_login(self.student)
         self.assertEqual(self.client.get(archive_url).status_code, 403)
+
+    def test_supervisor_can_archive_current_course_results(self):
+        self.client.force_login(self.owner_supervisor)
+        response = self.client.post(
+            reverse("supervisor_course_archive_results", args=[self.course.id]),
+            {"note": "End of term"},
+        )
+        self.assertRedirects(response, reverse("supervisor_course_summary", args=[self.course.id]))
+        self.assertEqual(ArchiveBatch.objects.filter(course=self.course).count(), 1)
+        self.assertEqual(Result.objects.filter(course=self.course, archive_batch__isnull=True).count(), 0)
 
     def test_archives_page_lists_batches_with_metadata_and_detail_link(self):
         batch = ArchiveBatch.objects.create(
@@ -2027,6 +2100,41 @@ class SupervisorCourseArchiveResultsViewTests(TestCase):
         self.client.force_login(self.student)
         self.assertEqual(self.client.get(archives_url).status_code, 403)
 
+    def test_archived_results_disappear_from_current_summary_and_submissions_views(self):
+        self.client.force_login(self.owner_supervisor)
+        self.client.post(reverse("supervisor_course_archive_results", args=[self.course.id]))
+
+        summary_response = self.client.get(reverse("supervisor_course_summary", args=[self.course.id]))
+        self.assertEqual(summary_response.status_code, 200)
+        self.assertEqual(len(summary_response.context["results"]), 0)
+        self.assertContains(summary_response, "No submission")
+
+        submissions_response = self.client.get(
+            reverse("supervisor_exercise_submissions", args=[self.exercise.id])
+        )
+        self.assertEqual(submissions_response.status_code, 200)
+        self.assertContains(submissions_response, "No submissions yet.")
+
+    def test_archived_results_appear_in_archive_browsing(self):
+        self.client.force_login(self.owner_supervisor)
+        self.client.post(
+            reverse("supervisor_course_archive_results", args=[self.course.id]),
+            {"note": "Spring archive"},
+        )
+        batch = ArchiveBatch.objects.get(course=self.course)
+
+        archives_response = self.client.get(reverse("supervisor_course_archives", args=[self.course.id]))
+        self.assertEqual(archives_response.status_code, 200)
+        self.assertContains(archives_response, "Spring archive")
+        self.assertContains(archives_response, "<td>2</td>", html=True)
+
+        detail_response = self.client.get(
+            reverse("supervisor_course_archive_batch_detail", args=[batch.id])
+        )
+        self.assertEqual(detail_response.status_code, 200)
+        self.assertContains(detail_response, self.student.email)
+        self.assertContains(detail_response, self.other_student.email)
+
     def test_archive_batch_detail_page_access_and_course_scoping(self):
         batch = ArchiveBatch.objects.create(
             course=self.course,
@@ -2055,6 +2163,26 @@ class SupervisorCourseArchiveResultsViewTests(TestCase):
         self.client.force_login(self.unrelated_supervisor)
         self.assertEqual(self.client.get(detail_url).status_code, 403)
 
+    def test_archived_result_data_and_uploaded_file_reference_are_preserved(self):
+        original_uploaded_name = self.current_result.uploaded_file.name
+        original_score = str(self.current_numerical_result.score)
+        original_submitted_at = self.current_numerical_result.submitted_at
+
+        self.client.force_login(self.owner_supervisor)
+        self.client.post(
+            reverse("supervisor_course_archive_results", args=[self.course.id]),
+            {"note": "Preservation batch"},
+        )
+
+        self.current_result.refresh_from_db()
+        self.current_numerical_result.refresh_from_db()
+
+        self.assertIsNotNone(self.current_result.archive_batch_id)
+        self.assertEqual(self.current_result.uploaded_file.name, original_uploaded_name)
+        self.assertEqual(str(self.current_numerical_result.score), original_score)
+        self.assertEqual(self.current_numerical_result.submitted_at, original_submitted_at)
+        self.assertEqual(str(self.current_numerical_result.submitted_numerical_value), "2.0000")
+
     def test_archived_file_download_is_course_access_controlled(self):
         batch = ArchiveBatch.objects.create(
             course=self.course,
@@ -2077,3 +2205,75 @@ class SupervisorCourseArchiveResultsViewTests(TestCase):
         self.client.force_login(self.unrelated_supervisor)
         denied_response = self.client.get(download_url)
         self.assertEqual(denied_response.status_code, 403)
+
+    def test_unrelated_supervisor_cannot_archive_or_view_other_course_archives(self):
+        self.client.force_login(self.unrelated_supervisor)
+        archive_post_response = self.client.post(
+            reverse("supervisor_course_archive_results", args=[self.course.id])
+        )
+        self.assertEqual(archive_post_response.status_code, 403)
+        archives_get_response = self.client.get(
+            reverse("supervisor_course_archives", args=[self.course.id])
+        )
+        self.assertEqual(archives_get_response.status_code, 403)
+
+    def test_administrator_can_archive_and_view_all_course_archives(self):
+        self.client.force_login(self.administrator)
+        archive_post_response = self.client.post(
+            reverse("supervisor_course_archive_results", args=[self.course.id]),
+            {"note": "Admin archive"},
+        )
+        self.assertRedirects(
+            archive_post_response,
+            reverse("supervisor_course_summary", args=[self.course.id]),
+        )
+        batch = ArchiveBatch.objects.get(course=self.course)
+
+        archives_response = self.client.get(reverse("supervisor_course_archives", args=[self.course.id]))
+        self.assertEqual(archives_response.status_code, 200)
+        self.assertContains(archives_response, "Admin archive")
+
+        detail_response = self.client.get(
+            reverse("supervisor_course_archive_batch_detail", args=[batch.id])
+        )
+        self.assertEqual(detail_response.status_code, 200)
+
+    def test_post_does_not_create_empty_archive_batch_when_no_current_results(self):
+        batch = ArchiveBatch.objects.create(
+            course=self.course,
+            created_by=self.owner_supervisor,
+            note="Already archived",
+        )
+        Result.objects.filter(course=self.course, archive_batch__isnull=True).update(
+            archive_batch=batch,
+            is_archived=True,
+        )
+        existing_count = ArchiveBatch.objects.filter(course=self.course).count()
+
+        self.client.force_login(self.owner_supervisor)
+        response = self.client.post(
+            reverse("supervisor_course_archive_results", args=[self.course.id]),
+            {"note": "Should not create"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "No current results to archive for this course.")
+        self.assertEqual(ArchiveBatch.objects.filter(course=self.course).count(), existing_count)
+
+    def test_already_archived_results_are_not_rearchived(self):
+        old_batch = ArchiveBatch.objects.create(
+            course=self.course,
+            created_by=self.owner_supervisor,
+            note="Old archive",
+        )
+        self.current_result.archive_batch = old_batch
+        self.current_result.is_archived = True
+        self.current_result.save(update_fields=["archive_batch", "is_archived"])
+
+        self.client.force_login(self.owner_supervisor)
+        self.client.post(reverse("supervisor_course_archive_results", args=[self.course.id]))
+        self.current_result.refresh_from_db()
+        self.current_numerical_result.refresh_from_db()
+
+        self.assertEqual(self.current_result.archive_batch_id, old_batch.id)
+        self.assertIsNotNone(self.current_numerical_result.archive_batch_id)
+        self.assertNotEqual(self.current_numerical_result.archive_batch_id, old_batch.id)

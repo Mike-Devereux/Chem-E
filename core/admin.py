@@ -103,8 +103,8 @@ class ExerciseVariantInline(admin.TabularInline):
 class UserAdmin(BaseUserAdmin):
     model = User
     ordering = ("email",)
-    list_display = ("email", "role", "is_staff", "is_active")
-    list_filter = ("role", "is_staff", "is_superuser", "is_active")
+    list_display = ("email", "role", "is_active")
+    list_filter = ("role", "is_active")
     search_fields = ("email",)
 
     fieldsets = (
@@ -122,6 +122,32 @@ class UserAdmin(BaseUserAdmin):
             },
         ),
     )
+
+    def _is_administrator(self, user):
+        return user.is_authenticated and (
+            user.is_superuser or user.role == User.Role.ADMINISTRATOR
+        )
+
+    def has_module_permission(self, request):
+        return self._is_administrator(request.user)
+
+    def has_view_permission(self, request, obj=None):
+        return self._is_administrator(request.user)
+
+    def has_add_permission(self, request):
+        return self._is_administrator(request.user)
+
+    def has_change_permission(self, request, obj=None):
+        return self._is_administrator(request.user)
+
+    def has_delete_permission(self, request, obj=None):
+        return self._is_administrator(request.user)
+
+    def get_queryset(self, request):
+        queryset = super().get_queryset(request)
+        if self._is_administrator(request.user):
+            return queryset
+        return queryset.none()
 
 
 @admin.register(Course)

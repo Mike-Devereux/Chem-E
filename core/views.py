@@ -397,12 +397,18 @@ class SupervisorCourseArchiveResultsView(SupervisorRequiredMixin, View):
         if not _user_can_access_course(request.user, course):
             raise PermissionDenied
         current_results_count = self._get_current_results_queryset(course).count()
+        archive_notice = (
+            "No current results to archive for this course."
+            if current_results_count == 0
+            else ""
+        )
         return render(
             request,
             self.template_name,
             {
                 "course": course,
                 "current_results_count": current_results_count,
+                "archive_notice": archive_notice,
             },
         )
 
@@ -411,13 +417,25 @@ class SupervisorCourseArchiveResultsView(SupervisorRequiredMixin, View):
         if not _user_can_access_course(request.user, course):
             raise PermissionDenied
         note = request.POST.get("note", "").strip()
+        current_results_queryset = self._get_current_results_queryset(course)
+        current_results_count = current_results_queryset.count()
+        if current_results_count == 0:
+            return render(
+                request,
+                self.template_name,
+                {
+                    "course": course,
+                    "current_results_count": 0,
+                    "archive_notice": "No current results to archive for this course.",
+                },
+            )
         with transaction.atomic():
             batch = ArchiveBatch.objects.create(
                 course=course,
                 created_by=request.user,
                 note=note,
             )
-            self._get_current_results_queryset(course).update(
+            current_results_queryset.update(
                 archive_batch=batch,
                 is_archived=True,
             )

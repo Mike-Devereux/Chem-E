@@ -114,23 +114,29 @@
 
 ## Phase 8 — Results overview
 
-* [ ] Create course summary page
-* [ ] Show:
+* [x] Create course summary page
+* [x] Show:
 
-  * [ ] students
-  * [ ] exercises
-  * [ ] scores per exercise
-* [ ] Highlight missing submissions
-* [ ] Filter by tutorial / student
+  * [x] students
+  * [x] exercises
+  * [x] scores per exercise
+* [x] Highlight missing submissions
+* [x] Filter by tutorial / student
 
 ---
 
 ## Phase 9 — Archiving
 
-* [ ] Add archive flag or archive table
-* [ ] Implement “archive results” action
-* [ ] Hide archived results from main view
-* [ ] Create archive browsing page
+- [x] Add ArchiveBatch model
+- [x] Link Result to ArchiveBatch
+- [x] Treat Result as archived when archive_batch is set
+- [x] Hide archived results from current views
+- [x] Add supervisor action to archive current course results
+- [x] Add archive label/note
+- [x] Create course archive list page
+- [x] Create archive detail page
+- [x] Preserve uploaded files and grading data
+- [x] Add archive access-control tests
 
 ---
 
