@@ -2596,6 +2596,19 @@ class SupervisorLandingAndSummaryListViewTests(TestCase):
         )
         self.assertRedirects(supervisor_login, reverse("supervisor_landing"))
 
+    def test_course_owner_supervisor_can_access_workflow_even_if_not_in_supervisors_m2m(self):
+        self.course_a.supervisors.remove(self.supervisor_owner)
+        self.client.force_login(self.supervisor_owner)
+
+        summary_list_response = self.client.get(reverse("supervisor_course_summary_list"))
+        self.assertEqual(summary_list_response.status_code, 200)
+        self.assertContains(summary_list_response, "Landing Course A")
+
+        course_summary_response = self.client.get(
+            reverse("supervisor_course_summary", args=[self.course_a.id])
+        )
+        self.assertEqual(course_summary_response.status_code, 200)
+
 
 class SupervisorTreeEditingWorkflowTests(TestCase):
     def setUp(self):

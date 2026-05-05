@@ -2,7 +2,17 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.db.models import Q
 
-from .models import ArchiveBatch, Course, Exercise, ExerciseVariant, Result, Tutorial, User
+from .models import (
+    ArchiveBatch,
+    Course,
+    Exercise,
+    ExercisePart,
+    ExerciseVariant,
+    Result,
+    ResultPart,
+    Tutorial,
+    User,
+)
 
 
 class SupervisorOwnedContentAdmin(admin.ModelAdmin):
@@ -97,6 +107,21 @@ class ExerciseVariantInline(admin.TabularInline):
     readonly_fields = ("created_at",)
     ordering = ("id",)
     show_change_link = True
+
+
+class ExercisePartInline(admin.TabularInline):
+    model = ExercisePart
+    extra = 0
+    fields = (
+        "label",
+        "order_index",
+        "answer_type",
+        "prompt_text",
+        "reference_solution",
+        "absolute_tolerance",
+        "available_points",
+    )
+    ordering = ("order_index", "id")
 
 
 @admin.register(User)
@@ -257,6 +282,7 @@ class ExerciseVariantAdmin(SupervisorOwnedContentAdmin):
         "exercise__tutorial__course__title",
     )
     ordering = ("exercise", "id")
+    inlines = (ExercisePartInline,)
 
     def get_supervisor_queryset(self, queryset, user):
         return queryset.filter(
@@ -309,6 +335,28 @@ class ResultAdmin(admin.ModelAdmin):
     )
     search_fields = ("student__email", "graded_by__email", "exercise__title", "tutorial__title", "course__title")
     ordering = ("-submitted_at",)
+
+
+@admin.register(ExercisePart)
+class ExercisePartAdmin(SupervisorOwnedContentAdmin):
+    list_display = ("variant", "label", "order_index", "answer_type", "available_points")
+    list_filter = ("answer_type", "variant__exercise__tutorial__course")
+    search_fields = ("label", "prompt_text", "variant__exercise__title")
+    ordering = ("variant", "order_index", "id")
+
+    def get_supervisor_queryset(self, queryset, user):
+        return queryset.filter(
+            Q(variant__exercise__tutorial__course__created_by=user)
+            | Q(variant__exercise__tutorial__course__supervisors=user)
+        ).distinct()
+
+
+@admin.register(ResultPart)
+class ResultPartAdmin(admin.ModelAdmin):
+    list_display = ("result", "exercise_part", "score", "is_correct", "submitted_at")
+    list_filter = ("exercise_part__answer_type", "result__course")
+    search_fields = ("result__student__email", "exercise_part__label", "exercise_part__variant__exercise__title")
+    ordering = ("-submitted_at", "-id")
 
 
 @admin.register(ArchiveBatch)

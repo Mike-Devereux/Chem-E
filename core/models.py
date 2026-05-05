@@ -159,6 +159,10 @@ class Exercise(models.Model):
 
 
 class ExerciseVariant(models.Model):
+    class PartAnswerType(models.TextChoices):
+        NUMERICAL = "numerical", "Numerical"
+        DOCUMENT_UPLOAD = "document_upload", "Document upload"
+
     exercise = models.ForeignKey(
         Exercise,
         on_delete=models.CASCADE,
@@ -227,6 +231,43 @@ class ArchiveBatch(models.Model):
 
     def __str__(self):
         return f"{self.course.title} - Archive batch {self.id}"
+
+
+class ExercisePart(models.Model):
+    variant = models.ForeignKey(
+        ExerciseVariant,
+        on_delete=models.CASCADE,
+        related_name="parts",
+    )
+    label = models.CharField(max_length=20)
+    prompt_text = models.TextField(blank=True)
+    answer_type = models.CharField(
+        max_length=20,
+        choices=ExerciseVariant.PartAnswerType.choices,
+        default=ExerciseVariant.PartAnswerType.NUMERICAL,
+    )
+    reference_solution = models.DecimalField(max_digits=12, decimal_places=4, blank=True, null=True)
+    absolute_tolerance = models.DecimalField(max_digits=12, decimal_places=4, blank=True, null=True)
+    available_points = models.DecimalField(max_digits=8, decimal_places=2, default=1)
+    order_index = models.PositiveIntegerField(default=1)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["variant_id", "order_index", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["variant", "label"],
+                name="core_exercisepart_unique_label_per_variant",
+            ),
+            models.UniqueConstraint(
+                fields=["variant", "order_index"],
+                name="core_exercisepart_unique_order_per_variant",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.variant.exercise.title} - Part {self.label}"
 
 
 class Result(models.Model):
@@ -299,5 +340,45 @@ class Result(models.Model):
         self.is_archived = self.archive_batch_id is not None
         super().save(*args, **kwargs)
 
+    def recompute_total_score(self):
+        total = self.parts.aggregate(total=models.Sum("score")).get("total")
+        self.score = total if total is not None else 0
+
     def __str__(self):
         return f"{self.student.email} - {self.exercise.title}"
+
+
+class ResultPart(models.Model):
+    result = models.ForeignKey(
+        Result,
+        on_delete=models.CASCADE,
+        related_name="parts",
+    )
+    exercise_part = models.ForeignKey(
+        ExercisePart,
+        on_delete=models.PROTECT,
+        related_name="result_parts",
+    )
+    submitted_numerical_value = models.DecimalField(max_digits=12, decimal_places=4, blank=True, null=True)
+    uploaded_file = models.FileField(
+        upload_to="student_submissions/",
+        blank=True,
+        null=True,
+        validators=[validate_student_submission_file],
+    )
+    is_correct = models.BooleanField(blank=True, null=True)
+    score = models.DecimalField(max_digits=8, decimal_places=2, default=0)
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["result_id", "exercise_part__order_index", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["result", "exercise_part"],
+                name="core_resultpart_unique_result_exercisepart",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.result.student.email} - {self.exercise_part.label}"

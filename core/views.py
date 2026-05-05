@@ -7,7 +7,7 @@ from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.exceptions import PermissionDenied
 from django.core.files.storage import default_storage
 from django.db import IntegrityError, transaction
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -27,7 +27,17 @@ from .forms import (
     UploadSubmissionForm,
 )
 from .grading import is_numerical_answer_correct
-from .models import ArchiveBatch, Course, Exercise, ExerciseVariant, Result, Tutorial, User
+from .models import (
+    ArchiveBatch,
+    Course,
+    Exercise,
+    ExercisePart,
+    ExerciseVariant,
+    Result,
+    ResultPart,
+    Tutorial,
+    User,
+)
 
 
 def _user_can_access_course(user, course):
@@ -35,13 +45,21 @@ def _user_can_access_course(user, course):
         return True
     if user.role != User.Role.SUPERVISOR:
         return False
-    return course.supervisors.filter(id=user.id).exists()
+    return course.created_by_id == user.id or course.supervisors.filter(id=user.id).exists()
 
 
 def _courses_accessible_to_supervisor_or_admin(user):
     if user.is_superuser or user.role == User.Role.ADMINISTRATOR:
         return Course.objects.all().order_by("title")
-    return Course.objects.filter(supervisors=user).order_by("title")
+    return Course.objects.filter(Q(created_by=user) | Q(supervisors=user)).distinct().order_by("title")
+
+
+def _user_can_access_course_results(user, course):
+    if user.is_superuser or user.role == User.Role.ADMINISTRATOR:
+        return True
+    if user.role != User.Role.SUPERVISOR:
+        return False
+    return course.supervisors.filter(id=user.id).exists()
 
 
 def _assert_user_can_manage_course(user, course):
@@ -384,9 +402,11 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        variant = None
         if self.request.user.role == User.Role.STUDENT:
             result = self._get_or_assign_student_result()
-            context["variant"] = result.assigned_variant if result else None
+            variant = result.assigned_variant if result else None
+            context["variant"] = variant
             context["existing_result"] = (
                 result
                 if result
@@ -397,12 +417,34 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
                 else None
             )
         else:
-            context["variant"] = self.object.variants.order_by("id").first()
+            variant = self.object.variants.order_by("id").first()
+            context["variant"] = variant
+        context["parts"] = variant.parts.order_by("order_index", "id") if variant else []
         if self.object.exercise_type == Exercise.ExerciseType.NUMERICAL:
             context["numerical_form"] = kwargs.get("numerical_form") or NumericalAnswerForm()
         elif self.object.exercise_type == Exercise.ExerciseType.DOCUMENT_UPLOAD:
             context["upload_form"] = kwargs.get("upload_form") or UploadSubmissionForm()
         return context
+
+    def _ensure_default_part_for_variant(self, variant):
+        part = variant.parts.order_by("order_index", "id").first()
+        if part:
+            return part
+        answer_type = (
+            ExerciseVariant.PartAnswerType.DOCUMENT_UPLOAD
+            if variant.exercise.exercise_type == Exercise.ExerciseType.DOCUMENT_UPLOAD
+            else ExerciseVariant.PartAnswerType.NUMERICAL
+        )
+        return ExercisePart.objects.create(
+            variant=variant,
+            label="a",
+            prompt_text="",
+            answer_type=answer_type,
+            reference_solution=variant.reference_solution,
+            absolute_tolerance=variant.absolute_tolerance,
+            available_points=variant.available_points,
+            order_index=1,
+        )
 
     def _get_or_assign_student_result(self):
         variants = list(self.object.variants.order_by("id"))
@@ -459,6 +501,26 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
                         "submitted_numerical_value",
                     ]
                 )
+                upload_part = (
+                    result.assigned_variant.parts.filter(
+                        answer_type=ExerciseVariant.PartAnswerType.DOCUMENT_UPLOAD
+                    )
+                    .order_by("order_index", "id")
+                    .first()
+                    or self._ensure_default_part_for_variant(result.assigned_variant)
+                )
+                ResultPart.objects.update_or_create(
+                    result=result,
+                    exercise_part=upload_part,
+                    defaults={
+                        "submitted_numerical_value": None,
+                        "uploaded_file": result.uploaded_file,
+                        "is_correct": None,
+                        "score": Decimal("0"),
+                    },
+                )
+                result.recompute_total_score()
+                result.save(update_fields=["score"])
                 # Delete the previous upload only after new save succeeds.
                 if old_file_name and old_file_name != result.uploaded_file.name:
                     if default_storage.exists(old_file_name):
@@ -510,6 +572,24 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
                         "graded_by",
                     ]
                 )
+                numerical_part = (
+                    variant.parts.filter(answer_type=ExerciseVariant.PartAnswerType.NUMERICAL)
+                    .order_by("order_index", "id")
+                    .first()
+                    or self._ensure_default_part_for_variant(variant)
+                )
+                ResultPart.objects.update_or_create(
+                    result=result,
+                    exercise_part=numerical_part,
+                    defaults={
+                        "submitted_numerical_value": form.cleaned_data["submitted_value"],
+                        "uploaded_file": None,
+                        "is_correct": is_correct,
+                        "score": variant.available_points if is_correct else Decimal("0"),
+                    },
+                )
+                result.recompute_total_score()
+                result.save(update_fields=["score"])
             context = self.get_context_data(
                 numerical_form=NumericalAnswerForm(),
             )
@@ -524,7 +604,7 @@ class SupervisorExerciseSubmissionsView(SupervisorRequiredMixin, DetailView):
     pk_url_kwarg = "exercise_id"
 
     def get_context_data(self, **kwargs):
-        if not _user_can_access_course(self.request.user, self.object.tutorial.course):
+        if not _user_can_access_course_results(self.request.user, self.object.tutorial.course):
             raise PermissionDenied
         context = super().get_context_data(**kwargs)
         submissions = Result.objects.filter(
@@ -551,7 +631,7 @@ class SupervisorSubmissionDetailView(SupervisorRequiredMixin, DetailView):
         return Result.objects.filter(archive_batch__isnull=True)
 
     def get_context_data(self, **kwargs):
-        if not _user_can_access_course(self.request.user, self.object.course):
+        if not _user_can_access_course_results(self.request.user, self.object.course):
             raise PermissionDenied
         context = super().get_context_data(**kwargs)
         if self.object.exercise.exercise_type == Exercise.ExerciseType.DOCUMENT_UPLOAD:
@@ -566,7 +646,7 @@ class SupervisorSubmissionDetailView(SupervisorRequiredMixin, DetailView):
 
     def post(self, request, *args, **kwargs):
         self.object = self.get_object()
-        if not _user_can_access_course(request.user, self.object.course):
+        if not _user_can_access_course_results(request.user, self.object.course):
             raise PermissionDenied
         if self.object.exercise.exercise_type != Exercise.ExerciseType.DOCUMENT_UPLOAD:
             return self.render_to_response(self.get_context_data())
@@ -594,7 +674,7 @@ class SupervisorSubmissionDetailView(SupervisorRequiredMixin, DetailView):
 class SupervisorSubmissionFileDownloadView(SupervisorRequiredMixin, View):
     def get(self, request, result_id):
         submission = get_object_or_404(Result, pk=result_id, archive_batch__isnull=True)
-        if not _user_can_access_course(request.user, submission.course):
+        if not _user_can_access_course_results(request.user, submission.course):
             raise PermissionDenied
         if not submission.uploaded_file:
             raise Http404("No uploaded file for this submission.")

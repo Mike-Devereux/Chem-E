@@ -79,3 +79,7 @@ uv run python manage.py seed_demo_data
 Uploaded files are stored under `MEDIA_ROOT` in the local `media/` directory.
 
 The `media/` directory is for development data and should not be committed to Git.
+
+## Supervisor course/tutorial/exercise/variant editing should use a tree format
+
+Rather than relying on Django built-ins, a tree structure of course->tutorial->exercise->exercise variants should be shown to supervisors when creating and editing new content
