@@ -59,7 +59,6 @@ class Command(BaseCommand):
             order_index=1,
             defaults={
                 "title": "Mass balance basics",
-                "exercise_type": Exercise.ExerciseType.NUMERICAL,
                 "is_active": True,
             },
         )
@@ -68,7 +67,6 @@ class Command(BaseCommand):
             order_index=2,
             defaults={
                 "title": "Upload process sketch",
-                "exercise_type": Exercise.ExerciseType.DOCUMENT_UPLOAD,
                 "is_active": True,
             },
         )
@@ -77,7 +75,6 @@ class Command(BaseCommand):
             order_index=1,
             defaults={
                 "title": "Distillation reflux ratio",
-                "exercise_type": Exercise.ExerciseType.NUMERICAL,
                 "is_active": True,
             },
         )

@@ -81,7 +81,7 @@ class TutorialInline(admin.TabularInline):
 class ExerciseInline(admin.TabularInline):
     model = Exercise
     extra = 0
-    fields = ("title", "order_index", "exercise_type", "is_active")
+    fields = ("title", "order_index", "is_active")
     ordering = ("order_index", "id")
     show_change_link = True
 
@@ -222,11 +222,10 @@ class ExerciseAdmin(SupervisorOwnedContentAdmin):
     list_display = (
         "title",
         "tutorial",
-        "exercise_type",
         "order_index",
         "active_unlocked_status",
     )
-    list_filter = ("is_active", "exercise_type", "tutorial", "tutorial__course")
+    list_filter = ("is_active", "tutorial", "tutorial__course")
     search_fields = ("title", "tutorial__title", "tutorial__course__title")
     ordering = ("tutorial", "order_index", "title")
     inlines = (ExerciseVariantInline,)
@@ -260,14 +259,12 @@ class ExerciseVariantAdmin(SupervisorOwnedContentAdmin):
     list_display = (
         "id",
         "exercise",
-        "exercise_type",
         "exercise_is_active",
         "created_at",
         "updated_at",
     )
     list_filter = (
         "exercise__is_active",
-        "exercise__exercise_type",
         "exercise__tutorial__course",
         "exercise__tutorial",
     )
@@ -294,10 +291,6 @@ class ExerciseVariantAdmin(SupervisorOwnedContentAdmin):
             ).distinct()
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
-    @admin.display(ordering="exercise__exercise_type", description="Exercise type")
-    def exercise_type(self, obj):
-        return obj.exercise.get_exercise_type_display()
-
     @admin.display(ordering="exercise__is_active", description="Exercise active")
     def exercise_is_active(self, obj):
         return obj.exercise.is_active
@@ -320,7 +313,6 @@ class ResultAdmin(admin.ModelAdmin):
     list_filter = (
         "course",
         "tutorial",
-        "exercise__exercise_type",
         "exercise__is_active",
         "is_correct",
         "archive_batch",

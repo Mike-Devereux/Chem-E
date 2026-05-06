@@ -401,15 +401,13 @@ class ExerciseValidationTests(TestCase):
             order_index=1,
         )
 
-    def test_exercise_type_must_be_numerical_or_upload(self):
+    def test_exercise_type_property_defaults_to_numerical_without_parts(self):
         exercise = Exercise(
             tutorial=self.tutorial,
-            title="Invalid type exercise",
+            title="Type inference exercise",
             order_index=1,
-            exercise_type="invalid_type",
         )
-        with self.assertRaises(ValidationError):
-            exercise.full_clean()
+        self.assertEqual(exercise.exercise_type, Exercise.ExerciseType.NUMERICAL)
 
     def test_numerical_part_requires_reference_tolerance_and_points(self):
         exercise = Exercise.objects.create(
@@ -2884,6 +2882,13 @@ class SupervisorTreeEditingWorkflowTests(TestCase):
             reverse("supervisor_exercise_create", args=[self.tutorial.id])
         )
         self.assertNotContains(exercise_create, 'name="tutorial"', html=False)
+        self.assertNotContains(exercise_create, 'name="exercise_type"', html=False)
+
+        exercise_edit = self.client.get(
+            reverse("supervisor_exercise_edit", args=[self.exercise.id])
+        )
+        self.assertEqual(exercise_edit.status_code, 200)
+        self.assertNotContains(exercise_edit, 'name="exercise_type"', html=False)
 
         variant_create = self.client.get(
             reverse("supervisor_exercise_variant_create", args=[self.exercise.id])
@@ -2978,3 +2983,89 @@ class SupervisorTreeEditingWorkflowTests(TestCase):
         created = Course.objects.get(title="Created In Tree View")
         self.assertEqual(created.created_by, self.supervisor)
         self.assertTrue(created.supervisors.filter(id=self.supervisor.id).exists())
+
+    def test_create_tutorial_page_prefills_next_available_order_index(self):
+        Tutorial.objects.create(course=self.course, title="Tree Tutorial 2", order_index=4)
+        self.client.force_login(self.supervisor)
+        response = self.client.get(reverse("supervisor_tutorial_create", args=[self.course.id]))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["form"].initial.get("order_index"), 5)
+
+    def test_create_exercise_page_prefills_next_available_order_index(self):
+        Exercise.objects.create(
+            tutorial=self.tutorial,
+            title="Tree Exercise 2",
+            order_index=3,
+            exercise_type=Exercise.ExerciseType.NUMERICAL,
+        )
+        self.client.force_login(self.supervisor)
+        response = self.client.get(reverse("supervisor_exercise_create", args=[self.tutorial.id]))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["form"].initial.get("order_index"), 4)
+
+    def test_create_part_page_prefills_next_available_order_index(self):
+        ExercisePart.objects.create(
+            variant=self.variant,
+            label="b",
+            order_index=5,
+            answer_type=ExerciseVariant.PartAnswerType.NUMERICAL,
+            prompt_text="Extra part",
+            reference_solution="2.5000",
+            absolute_tolerance="0.1000",
+            available_points="2.00",
+        )
+        self.client.force_login(self.supervisor)
+        response = self.client.get(reverse("supervisor_exercise_part_create", args=[self.variant.id]))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["form"].initial.get("order_index"), 6)
+
+    def test_create_tutorial_rejects_duplicate_order_index_with_form_error(self):
+        self.client.force_login(self.supervisor)
+        response = self.client.post(
+            reverse("supervisor_tutorial_create", args=[self.course.id]),
+            {
+                "title": "Duplicate Tutorial Order",
+                "description": "",
+                "order_index": 1,
+                "is_active": "on",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "This order index is already used in this course.")
+        self.assertFalse(
+            Tutorial.objects.filter(course=self.course, title="Duplicate Tutorial Order").exists()
+        )
+
+    def test_create_exercise_rejects_duplicate_order_index_with_form_error(self):
+        self.client.force_login(self.supervisor)
+        response = self.client.post(
+            reverse("supervisor_exercise_create", args=[self.tutorial.id]),
+            {
+                "title": "Duplicate Exercise Order",
+                "order_index": 1,
+                "is_active": "on",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "This order index is already used in this tutorial.")
+        self.assertFalse(
+            Exercise.objects.filter(tutorial=self.tutorial, title="Duplicate Exercise Order").exists()
+        )
+
+    def test_create_part_rejects_duplicate_order_index_with_form_error(self):
+        self.client.force_login(self.supervisor)
+        response = self.client.post(
+            reverse("supervisor_exercise_part_create", args=[self.variant.id]),
+            {
+                "label": "c",
+                "order_index": 1,
+                "answer_type": ExerciseVariant.PartAnswerType.NUMERICAL,
+                "prompt_text": "Duplicate order part",
+                "reference_solution": "3.0000",
+                "absolute_tolerance": "0.1000",
+                "available_points": "1.00",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "This order index is already used in this variant.")
+        self.assertFalse(ExercisePart.objects.filter(variant=self.variant, label="c").exists())

@@ -45,15 +45,53 @@ class CourseEditForm(forms.ModelForm):
 
 
 class TutorialEditForm(forms.ModelForm):
+    def __init__(self, *args, **kwargs):
+        self.course = kwargs.pop("course", None)
+        super().__init__(*args, **kwargs)
+        if self.course is None and self.instance and self.instance.pk:
+            self.course = self.instance.course
+
+    def clean_order_index(self):
+        order_index = self.cleaned_data["order_index"]
+        if self.course is None:
+            return order_index
+        queryset = Tutorial.objects.filter(course=self.course, order_index=order_index)
+        if self.instance and self.instance.pk:
+            queryset = queryset.exclude(pk=self.instance.pk)
+        if queryset.exists():
+            raise forms.ValidationError(
+                "This order index is already used in this course."
+            )
+        return order_index
+
     class Meta:
         model = Tutorial
         fields = ("title", "description", "order_index", "is_active")
 
 
 class ExerciseEditForm(forms.ModelForm):
+    def __init__(self, *args, **kwargs):
+        self.tutorial = kwargs.pop("tutorial", None)
+        super().__init__(*args, **kwargs)
+        if self.tutorial is None and self.instance and self.instance.pk:
+            self.tutorial = self.instance.tutorial
+
+    def clean_order_index(self):
+        order_index = self.cleaned_data["order_index"]
+        if self.tutorial is None:
+            return order_index
+        queryset = Exercise.objects.filter(tutorial=self.tutorial, order_index=order_index)
+        if self.instance and self.instance.pk:
+            queryset = queryset.exclude(pk=self.instance.pk)
+        if queryset.exists():
+            raise forms.ValidationError(
+                "This order index is already used in this tutorial."
+            )
+        return order_index
+
     class Meta:
         model = Exercise
-        fields = ("title", "order_index", "exercise_type", "is_active")
+        fields = ("title", "order_index", "is_active")
 
 
 class ExerciseVariantEditForm(forms.ModelForm):
@@ -67,6 +105,25 @@ class ExerciseVariantEditForm(forms.ModelForm):
 
 
 class ExercisePartEditForm(forms.ModelForm):
+    def __init__(self, *args, **kwargs):
+        self.variant = kwargs.pop("variant", None)
+        super().__init__(*args, **kwargs)
+        if self.variant is None and self.instance and self.instance.pk:
+            self.variant = self.instance.variant
+
+    def clean_order_index(self):
+        order_index = self.cleaned_data["order_index"]
+        if self.variant is None:
+            return order_index
+        queryset = ExercisePart.objects.filter(variant=self.variant, order_index=order_index)
+        if self.instance and self.instance.pk:
+            queryset = queryset.exclude(pk=self.instance.pk)
+        if queryset.exists():
+            raise forms.ValidationError(
+                "This order index is already used in this variant."
+            )
+        return order_index
+
     class Meta:
         model = ExercisePart
         fields = (

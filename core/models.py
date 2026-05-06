@@ -122,6 +122,11 @@ class Exercise(models.Model):
         NUMERICAL = "numerical", "Numerical"
         DOCUMENT_UPLOAD = "document_upload", "Document upload"
 
+    def __init__(self, *args, **kwargs):
+        # Backward-compatible shim while legacy callers still pass exercise_type.
+        self._legacy_exercise_type = kwargs.pop("exercise_type", None)
+        super().__init__(*args, **kwargs)
+
     tutorial = models.ForeignKey(
         Tutorial,
         on_delete=models.CASCADE,
@@ -129,10 +134,6 @@ class Exercise(models.Model):
     )
     title = models.CharField(max_length=200)
     order_index = models.PositiveIntegerField()
-    exercise_type = models.CharField(
-        max_length=20,
-        choices=ExerciseType.choices,
-    )
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -149,13 +150,21 @@ class Exercise(models.Model):
     def __str__(self):
         return f"{self.tutorial.title} - {self.title}"
 
-    def clean(self):
-        super().clean()
-        valid_types = {self.ExerciseType.NUMERICAL, self.ExerciseType.DOCUMENT_UPLOAD}
-        if self.exercise_type not in valid_types:
-            raise ValidationError(
-                {"exercise_type": "Exercise type must be either numerical or document_upload."}
-            )
+    @property
+    def exercise_type(self):
+        if not self.pk:
+            return self._legacy_exercise_type or self.ExerciseType.NUMERICAL
+        first_part_type = (
+            ExercisePart.objects.filter(variant__exercise=self)
+            .order_by("order_index", "id")
+            .values_list("answer_type", flat=True)
+            .first()
+        )
+        if first_part_type == ExerciseVariant.PartAnswerType.DOCUMENT_UPLOAD:
+            return self.ExerciseType.DOCUMENT_UPLOAD
+        if first_part_type == ExerciseVariant.PartAnswerType.NUMERICAL:
+            return self.ExerciseType.NUMERICAL
+        return self._legacy_exercise_type or self.ExerciseType.NUMERICAL
 
 
 class ExerciseVariant(models.Model):

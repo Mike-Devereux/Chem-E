@@ -57,7 +57,7 @@ def _result_upload_part(result):
 
 
 def _result_display_is_graded(result):
-    if result.exercise.exercise_type == Exercise.ExerciseType.NUMERICAL:
+    if result.parts.filter(exercise_part__answer_type=ExerciseVariant.PartAnswerType.NUMERICAL).exists():
         return result.parts.filter(submitted_numerical_value__isnull=False).exists()
     upload_part = _result_upload_part(result)
     return bool(upload_part and upload_part.is_manually_graded)
@@ -88,6 +88,11 @@ def _user_can_access_course_results(user, course):
 def _assert_user_can_manage_course(user, course):
     if not _user_can_access_course(user, course):
         raise PermissionDenied
+
+
+def _next_order_index(queryset):
+    highest = queryset.order_by("-order_index").values_list("order_index", flat=True).first()
+    return (highest or 0) + 1
 
 
 class CourseListView(LoginRequiredMixin, ListView):
@@ -216,7 +221,10 @@ class SupervisorTutorialCreateView(SupervisorRequiredMixin, View):
 
     def get(self, request, course_id):
         course = self._get_course(course_id)
-        form = TutorialEditForm()
+        form = TutorialEditForm(
+            course=course,
+            initial={"order_index": _next_order_index(course.tutorials.all())},
+        )
         return render(
             request,
             self.template_name,
@@ -225,12 +233,17 @@ class SupervisorTutorialCreateView(SupervisorRequiredMixin, View):
 
     def post(self, request, course_id):
         course = self._get_course(course_id)
-        form = TutorialEditForm(request.POST)
+        form = TutorialEditForm(request.POST, course=course)
         if form.is_valid():
             tutorial = form.save(commit=False)
             tutorial.course = course
-            tutorial.save()
-            return redirect("supervisor_course_manage_detail", course_id=course.id)
+            try:
+                with transaction.atomic():
+                    tutorial.save()
+            except IntegrityError:
+                form.add_error("order_index", "This order index is already used in this course.")
+            else:
+                return redirect("supervisor_course_manage_detail", course_id=course.id)
         return render(
             request,
             self.template_name,
@@ -261,7 +274,7 @@ class SupervisorTutorialEditView(SupervisorRequiredMixin, View):
 
     def get(self, request, tutorial_id):
         tutorial = self._get_tutorial(tutorial_id)
-        form = TutorialEditForm(instance=tutorial)
+        form = TutorialEditForm(instance=tutorial, course=tutorial.course)
         return render(
             request,
             self.template_name,
@@ -270,10 +283,15 @@ class SupervisorTutorialEditView(SupervisorRequiredMixin, View):
 
     def post(self, request, tutorial_id):
         tutorial = self._get_tutorial(tutorial_id)
-        form = TutorialEditForm(request.POST, instance=tutorial)
+        form = TutorialEditForm(request.POST, instance=tutorial, course=tutorial.course)
         if form.is_valid():
-            form.save()
-            return redirect("supervisor_tutorial_manage_detail", tutorial_id=tutorial.id)
+            try:
+                with transaction.atomic():
+                    form.save()
+            except IntegrityError:
+                form.add_error("order_index", "This order index is already used in this course.")
+            else:
+                return redirect("supervisor_tutorial_manage_detail", tutorial_id=tutorial.id)
         return render(
             request,
             self.template_name,
@@ -291,7 +309,10 @@ class SupervisorExerciseCreateView(SupervisorRequiredMixin, View):
 
     def get(self, request, tutorial_id):
         tutorial = self._get_tutorial(tutorial_id)
-        form = ExerciseEditForm()
+        form = ExerciseEditForm(
+            tutorial=tutorial,
+            initial={"order_index": _next_order_index(tutorial.exercises.all())},
+        )
         return render(
             request,
             self.template_name,
@@ -300,12 +321,20 @@ class SupervisorExerciseCreateView(SupervisorRequiredMixin, View):
 
     def post(self, request, tutorial_id):
         tutorial = self._get_tutorial(tutorial_id)
-        form = ExerciseEditForm(request.POST)
+        form = ExerciseEditForm(request.POST, tutorial=tutorial)
         if form.is_valid():
             exercise = form.save(commit=False)
             exercise.tutorial = tutorial
-            exercise.save()
-            return redirect("supervisor_tutorial_manage_detail", tutorial_id=tutorial.id)
+            try:
+                with transaction.atomic():
+                    exercise.save()
+            except IntegrityError:
+                form.add_error(
+                    "order_index",
+                    "This order index is already used in this tutorial.",
+                )
+            else:
+                return redirect("supervisor_tutorial_manage_detail", tutorial_id=tutorial.id)
         return render(
             request,
             self.template_name,
@@ -336,7 +365,7 @@ class SupervisorExerciseEditView(SupervisorRequiredMixin, View):
 
     def get(self, request, exercise_id):
         exercise = self._get_exercise(exercise_id)
-        form = ExerciseEditForm(instance=exercise)
+        form = ExerciseEditForm(instance=exercise, tutorial=exercise.tutorial)
         return render(
             request,
             self.template_name,
@@ -345,10 +374,22 @@ class SupervisorExerciseEditView(SupervisorRequiredMixin, View):
 
     def post(self, request, exercise_id):
         exercise = self._get_exercise(exercise_id)
-        form = ExerciseEditForm(request.POST, instance=exercise)
+        form = ExerciseEditForm(
+            request.POST,
+            instance=exercise,
+            tutorial=exercise.tutorial,
+        )
         if form.is_valid():
-            form.save()
-            return redirect("supervisor_exercise_manage_detail", exercise_id=exercise.id)
+            try:
+                with transaction.atomic():
+                    form.save()
+            except IntegrityError:
+                form.add_error(
+                    "order_index",
+                    "This order index is already used in this tutorial.",
+                )
+            else:
+                return redirect("supervisor_exercise_manage_detail", exercise_id=exercise.id)
         return render(
             request,
             self.template_name,
@@ -441,7 +482,10 @@ class SupervisorExercisePartCreateView(SupervisorRequiredMixin, View):
 
     def get(self, request, variant_id):
         variant = self._get_variant(variant_id)
-        form = ExercisePartEditForm()
+        form = ExercisePartEditForm(
+            variant=variant,
+            initial={"order_index": _next_order_index(variant.parts.all())},
+        )
         return render(
             request,
             self.template_name,
@@ -457,12 +501,17 @@ class SupervisorExercisePartCreateView(SupervisorRequiredMixin, View):
 
     def post(self, request, variant_id):
         variant = self._get_variant(variant_id)
-        form = ExercisePartEditForm(request.POST)
+        form = ExercisePartEditForm(request.POST, variant=variant)
         if form.is_valid():
             part = form.save(commit=False)
             part.variant = variant
-            part.save()
-            return redirect("supervisor_exercise_variant_manage_detail", variant_id=variant.id)
+            try:
+                with transaction.atomic():
+                    part.save()
+            except IntegrityError:
+                form.add_error("order_index", "This order index is already used in this variant.")
+            else:
+                return redirect("supervisor_exercise_variant_manage_detail", variant_id=variant.id)
         return render(
             request,
             self.template_name,
@@ -487,7 +536,7 @@ class SupervisorExercisePartEditView(SupervisorRequiredMixin, View):
 
     def get(self, request, part_id):
         part = self._get_part(part_id)
-        form = ExercisePartEditForm(instance=part)
+        form = ExercisePartEditForm(instance=part, variant=part.variant)
         return render(
             request,
             self.template_name,
@@ -503,10 +552,15 @@ class SupervisorExercisePartEditView(SupervisorRequiredMixin, View):
 
     def post(self, request, part_id):
         part = self._get_part(part_id)
-        form = ExercisePartEditForm(request.POST, instance=part)
+        form = ExercisePartEditForm(request.POST, instance=part, variant=part.variant)
         if form.is_valid():
-            form.save()
-            return redirect("supervisor_exercise_variant_manage_detail", variant_id=part.variant_id)
+            try:
+                with transaction.atomic():
+                    form.save()
+            except IntegrityError:
+                form.add_error("order_index", "This order index is already used in this variant.")
+            else:
+                return redirect("supervisor_exercise_variant_manage_detail", variant_id=part.variant_id)
         return render(
             request,
             self.template_name,
@@ -572,10 +626,17 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
         else:
             variant = self.object.variants.order_by("id").first()
             context["variant"] = variant
-        context["parts"] = variant.parts.order_by("order_index", "id") if variant else []
-        if self.object.exercise_type == Exercise.ExerciseType.NUMERICAL:
+        parts = variant.parts.order_by("order_index", "id") if variant else []
+        context["parts"] = parts
+        context["has_numerical_parts"] = any(
+            part.answer_type == ExerciseVariant.PartAnswerType.NUMERICAL for part in parts
+        )
+        context["has_upload_parts"] = any(
+            part.answer_type == ExerciseVariant.PartAnswerType.DOCUMENT_UPLOAD for part in parts
+        )
+        if context["has_numerical_parts"]:
             context["numerical_form"] = kwargs.get("numerical_form") or NumericalAnswerForm()
-        elif self.object.exercise_type == Exercise.ExerciseType.DOCUMENT_UPLOAD:
+        if context["has_upload_parts"]:
             context["upload_form"] = kwargs.get("upload_form") or UploadSubmissionForm()
         return context
 
@@ -583,16 +644,11 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
         part = variant.parts.order_by("order_index", "id").first()
         if part:
             return part
-        answer_type = (
-            ExerciseVariant.PartAnswerType.DOCUMENT_UPLOAD
-            if variant.exercise.exercise_type == Exercise.ExerciseType.DOCUMENT_UPLOAD
-            else ExerciseVariant.PartAnswerType.NUMERICAL
-        )
         return ExercisePart.objects.create(
             variant=variant,
             label="a",
             prompt_text="",
-            answer_type=answer_type,
+            answer_type=ExerciseVariant.PartAnswerType.NUMERICAL,
             reference_solution=None,
             absolute_tolerance=None,
             available_points=Decimal("1.00"),
@@ -626,10 +682,19 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
 
     def post(self, request, *args, **kwargs):
         self.object = self.get_object()
-        if self.object.exercise_type == Exercise.ExerciseType.DOCUMENT_UPLOAD:
+        result = self._get_or_assign_student_result() if self.request.user.role == User.Role.STUDENT else None
+        variant = (
+            result.assigned_variant if result else self.object.variants.order_by("id").first()
+        )
+        parts = variant.parts.order_by("order_index", "id") if variant else ExercisePart.objects.none()
+        has_upload_parts = parts.filter(answer_type=ExerciseVariant.PartAnswerType.DOCUMENT_UPLOAD).exists()
+        has_numerical_parts = parts.filter(
+            answer_type=ExerciseVariant.PartAnswerType.NUMERICAL
+        ).exists()
+
+        if has_upload_parts and "uploaded_file" in request.FILES:
             form = UploadSubmissionForm(request.POST, request.FILES)
-            if form.is_valid() and self.request.user.role == User.Role.STUDENT:
-                result = self._get_or_assign_student_result()
+            if form.is_valid() and result:
                 upload_part = (
                     result.assigned_variant.parts.filter(
                         answer_type=ExerciseVariant.PartAnswerType.DOCUMENT_UPLOAD
@@ -693,17 +758,11 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
                 )
             return self.render_to_response(self.get_context_data(upload_form=form))
 
-        if self.object.exercise_type != Exercise.ExerciseType.NUMERICAL:
+        if not has_numerical_parts:
             return self.render_to_response(self.get_context_data())
 
         form = NumericalAnswerForm(request.POST)
         if form.is_valid():
-            result = None
-            variant = (
-                (result := self._get_or_assign_student_result()).assigned_variant
-                if self.request.user.role == User.Role.STUDENT
-                else self.object.variants.order_by("id").first()
-            )
             is_correct = None
             if (
                 variant
@@ -802,23 +861,26 @@ class SupervisorSubmissionDetailView(SupervisorRequiredMixin, DetailView):
         if not _user_can_access_course_results(self.request.user, self.object.course):
             raise PermissionDenied
         context = super().get_context_data(**kwargs)
-        if self.object.exercise.exercise_type == Exercise.ExerciseType.DOCUMENT_UPLOAD:
-            upload_part = _result_upload_part(self.object)
+        upload_part = _result_upload_part(self.object)
+        context["upload_result_part"] = upload_part
+        if upload_part:
             initial = {
-                "score": upload_part.score if upload_part else self.object.score,
-                "feedback": upload_part.feedback if upload_part else "",
+                "score": upload_part.score,
+                "feedback": upload_part.feedback,
             }
             context["grading_form"] = kwargs.get("grading_form") or ManualUploadGradingForm(
                 initial=initial
             )
-            context["upload_result_part"] = upload_part
+        context["numerical_result_parts"] = self.object.parts.filter(
+            exercise_part__answer_type=ExerciseVariant.PartAnswerType.NUMERICAL
+        ).select_related("exercise_part")
         return context
 
     def post(self, request, *args, **kwargs):
         self.object = self.get_object()
         if not _user_can_access_course_results(request.user, self.object.course):
             raise PermissionDenied
-        if self.object.exercise.exercise_type != Exercise.ExerciseType.DOCUMENT_UPLOAD:
+        if _result_upload_part(self.object) is None:
             return self.render_to_response(self.get_context_data())
 
         form = ManualUploadGradingForm(request.POST)

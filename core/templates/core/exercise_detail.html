@@ -20,7 +20,7 @@
         <p>No exercise variant available yet.</p>
     {% endif %}
 
-    {% if exercise.exercise_type == "numerical" %}
+    {% if has_numerical_parts %}
         <h2>Submit numerical answer</h2>
         <form method="post">
             {% csrf_token %}
@@ -37,7 +37,9 @@
             {% endfor %}
             <p>Score: {{ existing_result.score }}</p>
         {% endif %}
-    {% elif exercise.exercise_type == "document_upload" %}
+    {% endif %}
+
+    {% if has_upload_parts %}
         <h2>Upload solution file</h2>
         <form method="post" enctype="multipart/form-data">
             {% csrf_token %}
