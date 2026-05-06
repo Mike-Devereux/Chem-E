@@ -19,6 +19,7 @@ from .access import SupervisorRequiredMixin
 from .forms import (
     CourseEditForm,
     ExerciseEditForm,
+    ExercisePartEditForm,
     ExerciseVariantEditForm,
     ManualUploadGradingForm,
     NumericalAnswerForm,
@@ -38,6 +39,28 @@ from .models import (
     Tutorial,
     User,
 )
+
+
+def _result_has_submission_data(result):
+    return result.parts.filter(
+        Q(submitted_numerical_value__isnull=False) | Q(uploaded_file__isnull=False)
+    ).exists()
+
+
+def _result_upload_part(result):
+    return (
+        result.parts.filter(exercise_part__answer_type=ExerciseVariant.PartAnswerType.DOCUMENT_UPLOAD)
+        .select_related("exercise_part")
+        .order_by("exercise_part__order_index", "id")
+        .first()
+    )
+
+
+def _result_display_is_graded(result):
+    if result.exercise.exercise_type == Exercise.ExerciseType.NUMERICAL:
+        return result.parts.filter(submitted_numerical_value__isnull=False).exists()
+    upload_part = _result_upload_part(result)
+    return bool(upload_part and upload_part.is_manually_graded)
 
 
 def _user_can_access_course(user, course):
@@ -113,7 +136,31 @@ class SupervisorCourseManageListView(SupervisorRequiredMixin, View):
 
     def get(self, request):
         courses = _courses_accessible_to_supervisor_or_admin(request.user)
-        return render(request, self.template_name, {"courses": courses})
+        return render(
+            request,
+            self.template_name,
+            {
+                "courses": courses,
+                "course_form": CourseEditForm(),
+            },
+        )
+
+    def post(self, request):
+        courses = _courses_accessible_to_supervisor_or_admin(request.user)
+        form = CourseEditForm(request.POST)
+        if form.is_valid():
+            course = form.save(commit=False)
+            course.created_by = request.user
+            course.save()
+            return redirect("supervisor_course_manage_detail", course_id=course.id)
+        return render(
+            request,
+            self.template_name,
+            {
+                "courses": courses,
+                "course_form": form,
+            },
+        )
 
 
 class SupervisorCourseManageDetailView(SupervisorRequiredMixin, DetailView):
@@ -371,6 +418,109 @@ class SupervisorExerciseVariantEditView(SupervisorRequiredMixin, View):
         )
 
 
+class SupervisorExerciseVariantManageDetailView(SupervisorRequiredMixin, DetailView):
+    model = ExerciseVariant
+    template_name = "core/supervisor_exercise_variant_manage_detail.html"
+    context_object_name = "variant"
+    pk_url_kwarg = "variant_id"
+
+    def get_context_data(self, **kwargs):
+        _assert_user_can_manage_course(self.request.user, self.object.exercise.tutorial.course)
+        context = super().get_context_data(**kwargs)
+        context["parts"] = self.object.parts.order_by("order_index", "id")
+        return context
+
+
+class SupervisorExercisePartCreateView(SupervisorRequiredMixin, View):
+    template_name = "core/supervisor_simple_form.html"
+
+    def _get_variant(self, variant_id):
+        variant = get_object_or_404(ExerciseVariant, pk=variant_id)
+        _assert_user_can_manage_course(self.request.user, variant.exercise.tutorial.course)
+        return variant
+
+    def get(self, request, variant_id):
+        variant = self._get_variant(variant_id)
+        form = ExercisePartEditForm()
+        return render(
+            request,
+            self.template_name,
+            {
+                "form": form,
+                "title": f"Create part for variant {variant.id}",
+                "cancel_url": reverse_lazy(
+                    "supervisor_exercise_variant_manage_detail",
+                    kwargs={"variant_id": variant.id},
+                ),
+            },
+        )
+
+    def post(self, request, variant_id):
+        variant = self._get_variant(variant_id)
+        form = ExercisePartEditForm(request.POST)
+        if form.is_valid():
+            part = form.save(commit=False)
+            part.variant = variant
+            part.save()
+            return redirect("supervisor_exercise_variant_manage_detail", variant_id=variant.id)
+        return render(
+            request,
+            self.template_name,
+            {
+                "form": form,
+                "title": f"Create part for variant {variant.id}",
+                "cancel_url": reverse_lazy(
+                    "supervisor_exercise_variant_manage_detail",
+                    kwargs={"variant_id": variant.id},
+                ),
+            },
+        )
+
+
+class SupervisorExercisePartEditView(SupervisorRequiredMixin, View):
+    template_name = "core/supervisor_simple_form.html"
+
+    def _get_part(self, part_id):
+        part = get_object_or_404(ExercisePart, pk=part_id)
+        _assert_user_can_manage_course(self.request.user, part.variant.exercise.tutorial.course)
+        return part
+
+    def get(self, request, part_id):
+        part = self._get_part(part_id)
+        form = ExercisePartEditForm(instance=part)
+        return render(
+            request,
+            self.template_name,
+            {
+                "form": form,
+                "title": f"Edit part {part.label}",
+                "cancel_url": reverse_lazy(
+                    "supervisor_exercise_variant_manage_detail",
+                    kwargs={"variant_id": part.variant_id},
+                ),
+            },
+        )
+
+    def post(self, request, part_id):
+        part = self._get_part(part_id)
+        form = ExercisePartEditForm(request.POST, instance=part)
+        if form.is_valid():
+            form.save()
+            return redirect("supervisor_exercise_variant_manage_detail", variant_id=part.variant_id)
+        return render(
+            request,
+            self.template_name,
+            {
+                "form": form,
+                "title": f"Edit part {part.label}",
+                "cancel_url": reverse_lazy(
+                    "supervisor_exercise_variant_manage_detail",
+                    kwargs={"variant_id": part.variant_id},
+                ),
+            },
+        )
+
+
 class CourseDetailView(LoginRequiredMixin, DetailView):
     model = Course
     template_name = "core/course_detail.html"
@@ -410,12 +560,15 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
             context["existing_result"] = (
                 result
                 if result
-                and (
-                    result.submitted_numerical_value is not None
-                    or bool(result.uploaded_file)
-                )
+                and _result_has_submission_data(result)
                 else None
             )
+            if context["existing_result"]:
+                context["existing_result_parts"] = (
+                    context["existing_result"]
+                    .parts.select_related("exercise_part")
+                    .order_by("exercise_part__order_index", "id")
+                )
         else:
             variant = self.object.variants.order_by("id").first()
             context["variant"] = variant
@@ -440,9 +593,9 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
             label="a",
             prompt_text="",
             answer_type=answer_type,
-            reference_solution=variant.reference_solution,
-            absolute_tolerance=variant.absolute_tolerance,
-            available_points=variant.available_points,
+            reference_solution=None,
+            absolute_tolerance=None,
+            available_points=Decimal("1.00"),
             order_index=1,
         )
 
@@ -477,30 +630,6 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
             form = UploadSubmissionForm(request.POST, request.FILES)
             if form.is_valid() and self.request.user.role == User.Role.STUDENT:
                 result = self._get_or_assign_student_result()
-                if result.is_manually_graded:
-                    form.add_error(
-                        None,
-                        "This submission has already been manually graded and cannot be replaced.",
-                    )
-                    return self.render_to_response(self.get_context_data(upload_form=form))
-
-                old_file_name = result.uploaded_file.name if result.uploaded_file else None
-                result.uploaded_file = form.cleaned_data["uploaded_file"]
-                result.submitted_at = timezone.now()
-                result.score = Decimal("0")
-                result.is_correct = None
-                result.is_manually_graded = False
-                result.submitted_numerical_value = None
-                result.save(
-                    update_fields=[
-                        "uploaded_file",
-                        "submitted_at",
-                        "score",
-                        "is_correct",
-                        "is_manually_graded",
-                        "submitted_numerical_value",
-                    ]
-                )
                 upload_part = (
                     result.assigned_variant.parts.filter(
                         answer_type=ExerciseVariant.PartAnswerType.DOCUMENT_UPLOAD
@@ -509,20 +638,54 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
                     .first()
                     or self._ensure_default_part_for_variant(result.assigned_variant)
                 )
+                upload_result_part = ResultPart.objects.filter(
+                    result=result,
+                    exercise_part=upload_part,
+                ).first()
+                if upload_result_part and upload_result_part.is_manually_graded:
+                    form.add_error(
+                        None,
+                        "This submission has already been manually graded and cannot be replaced.",
+                    )
+                    return self.render_to_response(self.get_context_data(upload_form=form))
+
+                old_file_name = (
+                    upload_result_part.uploaded_file.name
+                    if upload_result_part and upload_result_part.uploaded_file
+                    else None
+                )
+                result.submitted_at = timezone.now()
+                result.score = Decimal("0")
+                result.is_correct = None
+                result.save(update_fields=["submitted_at", "score", "is_correct"])
                 ResultPart.objects.update_or_create(
                     result=result,
                     exercise_part=upload_part,
                     defaults={
                         "submitted_numerical_value": None,
-                        "uploaded_file": result.uploaded_file,
+                        "uploaded_file": form.cleaned_data["uploaded_file"],
+                        "reference_value_used": None,
+                        "tolerance_used": None,
                         "is_correct": None,
                         "score": Decimal("0"),
+                        "is_manually_graded": False,
+                        "feedback": "",
+                        "graded_at": None,
+                        "graded_by": None,
                     },
                 )
                 result.recompute_total_score()
                 result.save(update_fields=["score"])
                 # Delete the previous upload only after new save succeeds.
-                if old_file_name and old_file_name != result.uploaded_file.name:
+                new_upload_result_part = ResultPart.objects.get(
+                    result=result,
+                    exercise_part=upload_part,
+                )
+                if (
+                    old_file_name
+                    and new_upload_result_part.uploaded_file
+                    and old_file_name != new_upload_result_part.uploaded_file.name
+                ):
                     if default_storage.exists(old_file_name):
                         default_storage.delete(old_file_name)
                 return self.render_to_response(
@@ -544,39 +707,32 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
             is_correct = None
             if (
                 variant
-                and variant.reference_solution is not None
-                and variant.absolute_tolerance is not None
+                and (
+                    numerical_part := (
+                        variant.parts.filter(answer_type=ExerciseVariant.PartAnswerType.NUMERICAL)
+                        .order_by("order_index", "id")
+                        .first()
+                        or self._ensure_default_part_for_variant(variant)
+                    )
+                )
+                and numerical_part.reference_solution is not None
+                and numerical_part.absolute_tolerance is not None
             ):
                 is_correct = is_numerical_answer_correct(
                     submitted_value=form.cleaned_data["submitted_value"],
-                    reference_solution=variant.reference_solution,
-                    absolute_tolerance=variant.absolute_tolerance,
+                    reference_solution=numerical_part.reference_solution,
+                    absolute_tolerance=numerical_part.absolute_tolerance,
                 )
             if result and is_correct is not None:
-                result.submitted_numerical_value = form.cleaned_data["submitted_value"]
                 result.is_correct = is_correct
-                result.score = variant.available_points if is_correct else Decimal("0")
+                result.score = numerical_part.available_points if is_correct else Decimal("0")
                 result.submitted_at = timezone.now()
-                # Numerical submissions are auto-graded immediately.
-                result.is_manually_graded = True
-                result.graded_at = timezone.now()
-                result.graded_by = None
                 result.save(
                     update_fields=[
-                        "submitted_numerical_value",
                         "is_correct",
                         "score",
                         "submitted_at",
-                        "is_manually_graded",
-                        "graded_at",
-                        "graded_by",
                     ]
-                )
-                numerical_part = (
-                    variant.parts.filter(answer_type=ExerciseVariant.PartAnswerType.NUMERICAL)
-                    .order_by("order_index", "id")
-                    .first()
-                    or self._ensure_default_part_for_variant(variant)
                 )
                 ResultPart.objects.update_or_create(
                     result=result,
@@ -584,8 +740,14 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
                     defaults={
                         "submitted_numerical_value": form.cleaned_data["submitted_value"],
                         "uploaded_file": None,
+                        "reference_value_used": numerical_part.reference_solution,
+                        "tolerance_used": numerical_part.absolute_tolerance,
                         "is_correct": is_correct,
-                        "score": variant.available_points if is_correct else Decimal("0"),
+                        "score": numerical_part.available_points if is_correct else Decimal("0"),
+                        "is_manually_graded": True,
+                        "feedback": "",
+                        "graded_at": timezone.now(),
+                        "graded_by": None,
                     },
                 )
                 result.recompute_total_score()
@@ -613,11 +775,17 @@ class SupervisorExerciseSubmissionsView(SupervisorRequiredMixin, DetailView):
         ).select_related("student")
         status_filter = self.request.GET.get("status")
         if status_filter == "graded":
-            submissions = submissions.filter(is_manually_graded=True)
+            submissions = submissions.filter(parts__is_manually_graded=True).distinct()
         elif status_filter == "ungraded":
-            submissions = submissions.filter(is_manually_graded=False)
+            submissions = submissions.filter(
+                parts__exercise_part__answer_type=ExerciseVariant.PartAnswerType.DOCUMENT_UPLOAD,
+                parts__is_manually_graded=False,
+            ).distinct()
         context["status_filter"] = status_filter or "all"
-        context["submissions"] = submissions.order_by("-submitted_at", "-id")
+        submissions = list(submissions.order_by("-submitted_at", "-id"))
+        for submission in submissions:
+            submission.display_is_manually_graded = _result_display_is_graded(submission)
+        context["submissions"] = submissions
         return context
 
 
@@ -635,13 +803,15 @@ class SupervisorSubmissionDetailView(SupervisorRequiredMixin, DetailView):
             raise PermissionDenied
         context = super().get_context_data(**kwargs)
         if self.object.exercise.exercise_type == Exercise.ExerciseType.DOCUMENT_UPLOAD:
+            upload_part = _result_upload_part(self.object)
             initial = {
-                "score": self.object.score,
-                "feedback": self.object.feedback,
+                "score": upload_part.score if upload_part else self.object.score,
+                "feedback": upload_part.feedback if upload_part else "",
             }
             context["grading_form"] = kwargs.get("grading_form") or ManualUploadGradingForm(
                 initial=initial
             )
+            context["upload_result_part"] = upload_part
         return context
 
     def post(self, request, *args, **kwargs):
@@ -653,12 +823,15 @@ class SupervisorSubmissionDetailView(SupervisorRequiredMixin, DetailView):
 
         form = ManualUploadGradingForm(request.POST)
         if form.is_valid():
-            self.object.score = form.cleaned_data["score"]
-            self.object.feedback = form.cleaned_data["feedback"]
-            self.object.is_manually_graded = True
-            self.object.graded_by = request.user
-            self.object.graded_at = timezone.now()
-            self.object.save(
+            upload_part = _result_upload_part(self.object)
+            if upload_part is None:
+                raise Http404("No upload part found for this submission.")
+            upload_part.score = form.cleaned_data["score"]
+            upload_part.feedback = form.cleaned_data["feedback"]
+            upload_part.is_manually_graded = True
+            upload_part.graded_by = request.user
+            upload_part.graded_at = timezone.now()
+            upload_part.save(
                 update_fields=[
                     "score",
                     "feedback",
@@ -667,6 +840,8 @@ class SupervisorSubmissionDetailView(SupervisorRequiredMixin, DetailView):
                     "graded_at",
                 ]
             )
+            self.object.recompute_total_score()
+            self.object.save(update_fields=["score"])
             return self.render_to_response(self.get_context_data())
         return self.render_to_response(self.get_context_data(grading_form=form))
 
@@ -676,12 +851,13 @@ class SupervisorSubmissionFileDownloadView(SupervisorRequiredMixin, View):
         submission = get_object_or_404(Result, pk=result_id, archive_batch__isnull=True)
         if not _user_can_access_course_results(request.user, submission.course):
             raise PermissionDenied
-        if not submission.uploaded_file:
+        upload_part = _result_upload_part(submission)
+        if not upload_part or not upload_part.uploaded_file:
             raise Http404("No uploaded file for this submission.")
         return FileResponse(
-            submission.uploaded_file.open("rb"),
+            upload_part.uploaded_file.open("rb"),
             as_attachment=True,
-            filename=os.path.basename(submission.uploaded_file.name),
+            filename=os.path.basename(upload_part.uploaded_file.name),
         )
 
 
@@ -746,6 +922,11 @@ class SupervisorCourseSummaryView(SupervisorRequiredMixin, DetailView):
             if selected_student
             else all_results
         )
+        for result in results:
+            upload_part = _result_upload_part(result)
+            result.display_is_manually_graded = _result_display_is_graded(result)
+            result.display_has_submission = _result_has_submission_data(result)
+            result.display_uploaded_file = upload_part.uploaded_file if upload_part else None
 
         results_by_student_exercise = {
             student.id: {exercise.id: None for exercise in exercises} for student in students
@@ -873,9 +1054,16 @@ class SupervisorCourseArchiveBatchDetailView(SupervisorRequiredMixin, DetailView
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context["results"] = self.object.results.select_related(
+        results = list(
+            self.object.results.select_related(
             "student", "exercise", "tutorial"
-        ).order_by("-submitted_at", "-id")
+            ).order_by("-submitted_at", "-id")
+        )
+        for result in results:
+            upload_part = _result_upload_part(result)
+            result.display_is_manually_graded = _result_display_is_graded(result)
+            result.display_uploaded_file = upload_part.uploaded_file if upload_part else None
+        context["results"] = results
         return context
 
 
@@ -884,12 +1072,13 @@ class SupervisorArchivedSubmissionFileDownloadView(SupervisorRequiredMixin, View
         submission = get_object_or_404(Result, pk=result_id, archive_batch__isnull=False)
         if not _user_can_access_course(request.user, submission.course):
             raise PermissionDenied
-        if not submission.uploaded_file:
+        upload_part = _result_upload_part(submission)
+        if not upload_part or not upload_part.uploaded_file:
             raise Http404("No uploaded file for this submission.")
         return FileResponse(
-            submission.uploaded_file.open("rb"),
+            upload_part.uploaded_file.open("rb"),
             as_attachment=True,
-            filename=os.path.basename(submission.uploaded_file.name),
+            filename=os.path.basename(upload_part.uploaded_file.name),
         )
 
 

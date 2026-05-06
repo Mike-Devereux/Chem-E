@@ -53,9 +53,9 @@
                     <th>{{ row.student.email }}</th>
                     {% for result in row.cells %}
                         {% if result %}
-                            {% if result.is_manually_graded %}
+                            {% if result.display_is_manually_graded %}
                                 <td class="cell-graded">{{ result.score }}</td>
-                            {% elif result.uploaded_file or result.submitted_numerical_value is not None %}
+                            {% elif result.display_has_submission %}
                                 <td class="cell-ungraded">Ungraded</td>
                             {% else %}
                                 <td class="cell-missing">-</td>

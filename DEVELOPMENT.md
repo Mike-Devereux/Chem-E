@@ -16,7 +16,7 @@ Production deployment will use Apache2, but Apache2 is not required during devel
 
 ## Environment
 
-- django is installed using uv to /home/devereux/chem-E
+- django is installed using uv to ~/chem-E
 - SQLite3 is to be used in the same uv environment
 
 ## Setup
@@ -30,7 +30,7 @@ source ~/chem-E/bin/activate
 uv pip install django
 ```
 
-- To test Django works (subsequently test connection to http://127.0.0.1:8000):
+- To test Django works without Chem-E (subsequently test connection to http://127.0.0.1:8000):
 ```bash
 django-admin startproject config .
 python manage.py runserver
@@ -50,7 +50,7 @@ git add <filelist>
 git commit -m "Initial commit"
 git push -u origin main
 ```
-- Each time cursor is restarted, use the files SPEC.md, TODO.md and DECISIONS.md to record the context required by the AI
+- Each time cursor is restarted, use the files SPEC.md, TODO.md and Decisions.md to record the context required by the AI
 - Password reset emails use Django's console email backend in development, so reset links are printed in the terminal running `python manage.py runserver`.
 - Password reset behavior uses Django built-ins only:
   - user-requested reset via `/password-reset/` (email link workflow),

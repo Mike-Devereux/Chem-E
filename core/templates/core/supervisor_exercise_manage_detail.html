@@ -21,7 +21,7 @@
             {% for variant in variants %}
                 <li>
                     Variant {{ forloop.counter }} -
-                    <a href="{% url 'supervisor_exercise_variant_edit' variant.id %}">Edit</a>
+                    <a href="{% url 'supervisor_exercise_variant_manage_detail' variant.id %}">Manage parts</a>
                 </li>
             {% endfor %}
         </ul>

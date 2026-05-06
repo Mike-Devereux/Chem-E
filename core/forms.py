@@ -1,7 +1,7 @@
 from django.contrib.auth.forms import UserCreationForm
 from django import forms
 
-from .models import Course, Exercise, ExerciseVariant, Tutorial, User
+from .models import Course, Exercise, ExercisePart, ExerciseVariant, Tutorial, User
 from .validators import validate_student_submission_file
 
 
@@ -62,8 +62,19 @@ class ExerciseVariantEditForm(forms.ModelForm):
         fields = (
             "exercise_text",
             "image",
+            "supervisor_notes",
+        )
+
+
+class ExercisePartEditForm(forms.ModelForm):
+    class Meta:
+        model = ExercisePart
+        fields = (
+            "label",
+            "order_index",
+            "answer_type",
+            "prompt_text",
             "reference_solution",
             "absolute_tolerance",
             "available_points",
-            "supervisor_notes",
         )

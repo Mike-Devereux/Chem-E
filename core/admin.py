@@ -98,9 +98,6 @@ class ExerciseVariantInline(admin.TabularInline):
     extra = 0
     fields = (
         "exercise_text",
-        "reference_solution",
-        "absolute_tolerance",
-        "available_points",
         "image",
         "created_at",
     )
@@ -265,7 +262,6 @@ class ExerciseVariantAdmin(SupervisorOwnedContentAdmin):
         "exercise",
         "exercise_type",
         "exercise_is_active",
-        "available_points",
         "created_at",
         "updated_at",
     )
@@ -317,11 +313,9 @@ class ResultAdmin(admin.ModelAdmin):
         "exercise",
         "score",
         "is_correct",
-        "is_manually_graded",
         "archive_batch",
         "is_archived",
         "submitted_at",
-        "graded_at",
     )
     list_filter = (
         "course",
@@ -329,11 +323,10 @@ class ResultAdmin(admin.ModelAdmin):
         "exercise__exercise_type",
         "exercise__is_active",
         "is_correct",
-        "is_manually_graded",
         "archive_batch",
         "is_archived",
     )
-    search_fields = ("student__email", "graded_by__email", "exercise__title", "tutorial__title", "course__title")
+    search_fields = ("student__email", "exercise__title", "tutorial__title", "course__title")
     ordering = ("-submitted_at",)
 
 
@@ -353,7 +346,15 @@ class ExercisePartAdmin(SupervisorOwnedContentAdmin):
 
 @admin.register(ResultPart)
 class ResultPartAdmin(admin.ModelAdmin):
-    list_display = ("result", "exercise_part", "score", "is_correct", "submitted_at")
+    list_display = (
+        "result",
+        "exercise_part",
+        "score",
+        "is_correct",
+        "is_manually_graded",
+        "submitted_at",
+        "graded_at",
+    )
     list_filter = ("exercise_part__answer_type", "result__course")
     search_fields = ("result__student__email", "exercise_part__label", "exercise_part__variant__exercise__title")
     ordering = ("-submitted_at", "-id")

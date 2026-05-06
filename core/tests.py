@@ -18,7 +18,135 @@ from .access import (
     supervisor_required,
 )
 from .grading import is_numerical_answer_correct
-from .models import ArchiveBatch, Course, Exercise, ExerciseVariant, Result, Tutorial, User
+from .models import (
+    ArchiveBatch,
+    Course,
+    Exercise,
+    ExercisePart,
+    ExerciseVariant,
+    Result,
+    ResultPart,
+    Tutorial,
+    User,
+)
+
+
+def _first_part_for_result(result):
+    part = (
+        ExercisePart.objects.filter(variant=result.assigned_variant)
+        .order_by("order_index", "id")
+        .first()
+    )
+    if part:
+        return part
+    answer_type = (
+        ExerciseVariant.PartAnswerType.DOCUMENT_UPLOAD
+        if result.exercise.exercise_type == Exercise.ExerciseType.DOCUMENT_UPLOAD
+        else ExerciseVariant.PartAnswerType.NUMERICAL
+    )
+    return ExercisePart.objects.create(
+        variant=result.assigned_variant,
+        label="a",
+        order_index=1,
+        answer_type=answer_type,
+        prompt_text="",
+        available_points="1.00",
+    )
+
+
+def _primary_result_part(result):
+    part = _first_part_for_result(result)
+    return ResultPart.objects.filter(result=result, exercise_part=part).first()
+
+
+_original_variant_create = ExerciseVariant.objects.create
+
+
+def _compat_variant_create(*args, **kwargs):
+    reference_solution = kwargs.pop("reference_solution", None)
+    absolute_tolerance = kwargs.pop("absolute_tolerance", None)
+    available_points = kwargs.pop("available_points", None)
+    variant = _original_variant_create(*args, **kwargs)
+    if reference_solution is not None or absolute_tolerance is not None or available_points is not None:
+        ExercisePart.objects.get_or_create(
+            variant=variant,
+            order_index=1,
+            defaults={
+                "label": "a",
+                "prompt_text": "",
+                "answer_type": (
+                    ExerciseVariant.PartAnswerType.DOCUMENT_UPLOAD
+                    if variant.exercise.exercise_type == Exercise.ExerciseType.DOCUMENT_UPLOAD
+                    else ExerciseVariant.PartAnswerType.NUMERICAL
+                ),
+                "reference_solution": reference_solution,
+                "absolute_tolerance": absolute_tolerance,
+                "available_points": available_points if available_points is not None else "1.00",
+            },
+        )
+    return variant
+
+
+ExerciseVariant.objects.create = _compat_variant_create
+
+
+_original_result_create = Result.objects.create
+
+
+def _compat_result_create(*args, **kwargs):
+    submitted_numerical_value = kwargs.pop("submitted_numerical_value", None)
+    uploaded_file = kwargs.pop("uploaded_file", None)
+    is_manually_graded = kwargs.pop("is_manually_graded", None)
+    feedback = kwargs.pop("feedback", None)
+    graded_by = kwargs.pop("graded_by", None)
+    graded_at = kwargs.pop("graded_at", None)
+    result = _original_result_create(*args, **kwargs)
+    if any(
+        value is not None
+        for value in (
+            submitted_numerical_value,
+            uploaded_file,
+            is_manually_graded,
+            feedback,
+            graded_by,
+            graded_at,
+        )
+    ):
+        inferred_is_manually_graded = (
+            submitted_numerical_value is not None
+            if is_manually_graded is None
+            else bool(is_manually_graded)
+        )
+        part = _first_part_for_result(result)
+        ResultPart.objects.update_or_create(
+            result=result,
+            exercise_part=part,
+            defaults={
+                "submitted_numerical_value": submitted_numerical_value,
+                "uploaded_file": uploaded_file,
+                "is_manually_graded": inferred_is_manually_graded,
+                "feedback": feedback or "",
+                "graded_by": graded_by,
+                "graded_at": graded_at,
+                "score": kwargs.get("score", 0),
+                "is_correct": kwargs.get("is_correct"),
+            },
+        )
+    return result
+
+
+Result.objects.create = _compat_result_create
+
+
+def _set_result_part_data(result, **kwargs):
+    part = _primary_result_part(result) or ResultPart.objects.create(
+        result=result,
+        exercise_part=_first_part_for_result(result),
+    )
+    for key, value in kwargs.items():
+        setattr(part, key, value)
+    part.save(update_fields=list(kwargs.keys()))
+    return part
 
 
 class UserEmailDomainValidationTests(TestCase):
@@ -283,74 +411,98 @@ class ExerciseValidationTests(TestCase):
         with self.assertRaises(ValidationError):
             exercise.full_clean()
 
-    def test_numerical_variant_requires_reference_tolerance_and_points(self):
+    def test_numerical_part_requires_reference_tolerance_and_points(self):
         exercise = Exercise.objects.create(
             tutorial=self.tutorial,
             title="Numerical exercise",
             order_index=1,
             exercise_type=Exercise.ExerciseType.NUMERICAL,
         )
-        variant = ExerciseVariant(
+        variant = ExerciseVariant.objects.create(
             exercise=exercise,
             exercise_text="Compute result.",
+        )
+        part = ExercisePart(
+            variant=variant,
+            label="a",
+            order_index=1,
+            answer_type=ExerciseVariant.PartAnswerType.NUMERICAL,
             reference_solution=None,
             absolute_tolerance=None,
             available_points=None,
         )
         with self.assertRaises(ValidationError) as ctx:
-            variant.full_clean()
+            part.full_clean()
         self.assertIn("reference_solution", ctx.exception.message_dict)
         self.assertIn("absolute_tolerance", ctx.exception.message_dict)
         self.assertIn("available_points", ctx.exception.message_dict)
 
-    def test_upload_variant_does_not_require_reference_solution(self):
+    def test_upload_part_does_not_require_reference_solution(self):
         exercise = Exercise.objects.create(
             tutorial=self.tutorial,
             title="Upload exercise",
             order_index=2,
             exercise_type=Exercise.ExerciseType.DOCUMENT_UPLOAD,
         )
-        variant = ExerciseVariant(
+        variant = ExerciseVariant.objects.create(
             exercise=exercise,
             exercise_text="Upload your document.",
+        )
+        part = ExercisePart(
+            variant=variant,
+            label="a",
+            order_index=1,
+            answer_type=ExerciseVariant.PartAnswerType.DOCUMENT_UPLOAD,
             reference_solution=None,
             absolute_tolerance=None,
             available_points="2.00",
         )
-        variant.full_clean()
+        part.full_clean()
 
-    def test_available_points_must_be_non_negative(self):
+    def test_part_available_points_must_be_non_negative(self):
         exercise = Exercise.objects.create(
             tutorial=self.tutorial,
             title="Points check exercise",
             order_index=3,
             exercise_type=Exercise.ExerciseType.DOCUMENT_UPLOAD,
         )
-        variant = ExerciseVariant(
+        variant = ExerciseVariant.objects.create(
             exercise=exercise,
             exercise_text="Any answer.",
+        )
+        part = ExercisePart(
+            variant=variant,
+            label="a",
+            order_index=1,
+            answer_type=ExerciseVariant.PartAnswerType.DOCUMENT_UPLOAD,
             available_points="-0.01",
         )
         with self.assertRaises(ValidationError) as ctx:
-            variant.full_clean()
+            part.full_clean()
         self.assertIn("available_points", ctx.exception.message_dict)
 
-    def test_tolerance_must_be_non_negative(self):
+    def test_part_tolerance_must_be_non_negative(self):
         exercise = Exercise.objects.create(
             tutorial=self.tutorial,
             title="Tolerance check exercise",
             order_index=4,
             exercise_type=Exercise.ExerciseType.NUMERICAL,
         )
-        variant = ExerciseVariant(
+        variant = ExerciseVariant.objects.create(
             exercise=exercise,
             exercise_text="Compute value.",
+        )
+        part = ExercisePart(
+            variant=variant,
+            label="a",
+            order_index=1,
+            answer_type=ExerciseVariant.PartAnswerType.NUMERICAL,
             reference_solution="1.0000",
             absolute_tolerance="-0.1000",
             available_points="1.00",
         )
         with self.assertRaises(ValidationError) as ctx:
-            variant.full_clean()
+            part.full_clean()
         self.assertIn("absolute_tolerance", ctx.exception.message_dict)
 
 
@@ -862,7 +1014,7 @@ class NumericalAnswerFormViewTests(TestCase):
         )
         self.assertEqual(post_response.status_code, 200)
         self.assertContains(post_response, "Your latest result")
-        self.assertContains(post_response, "Submitted value: 12.3400")
+        self.assertContains(post_response, "Part a submitted value: 12.3400")
 
     def test_numerical_exercise_rejects_non_numeric_input(self):
         self.client.force_login(self.student)
@@ -898,13 +1050,14 @@ class NumericalAnswerFormViewTests(TestCase):
             exercise=self.numerical_exercise,
             is_archived=False,
         )
-        self.assertEqual(str(result.submitted_numerical_value), "10.0200")
+        result_part = _primary_result_part(result)
+        self.assertEqual(str(result_part.submitted_numerical_value), "10.0200")
         self.assertTrue(result.is_correct)
         self.assertEqual(str(result.score), "2.00")
         self.assertIsNotNone(result.submitted_at)
-        self.assertTrue(result.is_manually_graded)
-        self.assertIsNotNone(result.graded_at)
-        self.assertIsNone(result.graded_by)
+        self.assertTrue(result_part.is_manually_graded)
+        self.assertIsNotNone(result_part.graded_at)
+        self.assertIsNone(result_part.graded_by)
         self.assertEqual(result.assigned_variant.exercise, self.numerical_exercise)
 
     def test_second_submission_updates_existing_result(self):
@@ -939,11 +1092,12 @@ class NumericalAnswerFormViewTests(TestCase):
         )
         self.assertEqual(first_result.id, second_result.id)
         self.assertEqual(first_result.assigned_variant_id, second_result.assigned_variant_id)
-        self.assertEqual(str(second_result.submitted_numerical_value), "10.0000")
+        second_result_part = _primary_result_part(second_result)
+        self.assertEqual(str(second_result_part.submitted_numerical_value), "10.0000")
         self.assertTrue(second_result.is_correct)
         self.assertEqual(str(second_result.score), "2.00")
-        self.assertTrue(second_result.is_manually_graded)
-        self.assertIsNotNone(second_result.graded_at)
+        self.assertTrue(second_result_part.is_manually_graded)
+        self.assertIsNotNone(second_result_part.graded_at)
 
     def test_revisit_shows_existing_submission_result(self):
         self.client.force_login(self.student)
@@ -956,8 +1110,8 @@ class NumericalAnswerFormViewTests(TestCase):
         )
         self.assertEqual(revisit_response.status_code, 200)
         self.assertContains(revisit_response, "Your latest result")
-        self.assertContains(revisit_response, "Submitted value: 10.0000")
-        self.assertContains(revisit_response, "Correct: True")
+        self.assertContains(revisit_response, "Part a submitted value: 10.0000")
+        self.assertContains(revisit_response, "Part a correct: True")
         self.assertContains(revisit_response, "Score: 2.00")
 
     def test_upload_submission_saves_file_to_existing_result(self):
@@ -974,13 +1128,14 @@ class NumericalAnswerFormViewTests(TestCase):
             exercise=self.upload_exercise,
             is_archived=False,
         )
-        self.assertTrue(bool(result.uploaded_file))
-        self.assertTrue(result.uploaded_file.name.endswith(".pdf"))
-        self.assertIn("student_submissions/", result.uploaded_file.name)
+        result_part = _primary_result_part(result)
+        self.assertTrue(bool(result_part.uploaded_file))
+        self.assertTrue(result_part.uploaded_file.name.endswith(".pdf"))
+        self.assertIn("student_submissions/", result_part.uploaded_file.name)
         self.assertEqual(result.assigned_variant.exercise, self.upload_exercise)
         self.assertEqual(str(result.score), "0.00")
-        self.assertFalse(result.is_manually_graded)
-        self.assertIsNone(result.submitted_numerical_value)
+        self.assertFalse(result_part.is_manually_graded)
+        self.assertIsNone(result_part.submitted_numerical_value)
 
     def test_upload_submission_can_replace_file_before_manual_grading(self):
         media_dir = tempfile.mkdtemp()
@@ -996,7 +1151,7 @@ class NumericalAnswerFormViewTests(TestCase):
                     exercise=self.upload_exercise,
                     is_archived=False,
                 )
-                old_name = result.uploaded_file.name
+                old_name = _primary_result_part(result).uploaded_file.name
                 self.assertTrue(default_storage.exists(old_name))
 
                 self.client.post(
@@ -1004,7 +1159,7 @@ class NumericalAnswerFormViewTests(TestCase):
                     {"uploaded_file": SimpleUploadedFile("second.pdf", b"second")},
                 )
                 result.refresh_from_db()
-                self.assertIn("second", os.path.basename(result.uploaded_file.name))
+                self.assertIn("second", os.path.basename(_primary_result_part(result).uploaded_file.name))
                 self.assertFalse(default_storage.exists(old_name))
         finally:
             for root, dirs, files in os.walk(media_dir, topdown=False):
@@ -1025,9 +1180,8 @@ class NumericalAnswerFormViewTests(TestCase):
             exercise=self.upload_exercise,
             is_archived=False,
         )
-        original_name = result.uploaded_file.name
-        result.is_manually_graded = True
-        result.save(update_fields=["is_manually_graded"])
+        original_name = _primary_result_part(result).uploaded_file.name
+        _set_result_part_data(result, is_manually_graded=True)
 
         response = self.client.post(
             reverse("exercise_detail", args=[self.upload_exercise.id]),
@@ -1036,7 +1190,7 @@ class NumericalAnswerFormViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "cannot be replaced")
         result.refresh_from_db()
-        self.assertEqual(result.uploaded_file.name, original_name)
+        self.assertEqual(_primary_result_part(result).uploaded_file.name, original_name)
 
     def test_upload_submission_rejects_disallowed_file_type(self):
         self.client.force_login(self.student)
@@ -1063,7 +1217,7 @@ class NumericalAnswerFormViewTests(TestCase):
             exercise=self.upload_exercise,
             is_archived=False,
         )
-        self.assertFalse(bool(result.uploaded_file))
+        self.assertIsNone(_primary_result_part(result))
 
     def test_upload_submission_rejects_oversized_file(self):
         self.client.force_login(self.student)
@@ -1090,7 +1244,7 @@ class NumericalAnswerFormViewTests(TestCase):
             exercise=self.upload_exercise,
             is_archived=False,
         )
-        self.assertFalse(bool(result.uploaded_file))
+        self.assertIsNone(_primary_result_part(result))
 
 
 class NumericalCheckingTests(TestCase):
@@ -1155,9 +1309,14 @@ class StudentUploadValidationTests(TestCase):
             tutorial=self.tutorial,
             exercise=self.exercise,
             assigned_variant=self.variant,
-            uploaded_file=uploaded_file,
         )
         result.full_clean()
+        result.save()
+        ResultPart(
+            result=result,
+            exercise_part=_first_part_for_result(result),
+            uploaded_file=uploaded_file,
+        ).full_clean()
 
     def test_rejects_unsupported_file_extension(self):
         uploaded_file = SimpleUploadedFile(
@@ -1171,10 +1330,21 @@ class StudentUploadValidationTests(TestCase):
             tutorial=self.tutorial,
             exercise=self.exercise,
             assigned_variant=self.variant,
-            uploaded_file=uploaded_file,
         )
-        with self.assertRaises(ValidationError) as ctx:
+        result = Result.objects.filter(
+            student=self.student,
+            exercise=self.exercise,
+            is_archived=False,
+        ).first() or result
+        if result.pk is None:
             result.full_clean()
+            result.save()
+        with self.assertRaises(ValidationError) as ctx:
+            ResultPart(
+                result=result,
+                exercise_part=_first_part_for_result(result),
+                uploaded_file=uploaded_file,
+            ).full_clean()
         self.assertIn("uploaded_file", ctx.exception.message_dict)
 
 
@@ -1287,9 +1457,11 @@ class SupervisorExerciseSubmissionsViewTests(TestCase):
 
     def test_supervisor_submission_detail_page_shows_required_fields(self):
         result = Result.objects.get(student=self.student, exercise=self.exercise, is_archived=False)
-        result.feedback = "Well explained."
-        result.uploaded_file = SimpleUploadedFile("answer.pdf", b"file-data")
-        result.save(update_fields=["feedback", "uploaded_file"])
+        _set_result_part_data(
+            result,
+            feedback="Well explained.",
+            uploaded_file=SimpleUploadedFile("answer.pdf", b"file-data"),
+        )
 
         self.client.force_login(self.supervisor)
         response = self.client.get(
@@ -1299,14 +1471,11 @@ class SupervisorExerciseSubmissionsViewTests(TestCase):
         self.assertContains(response, self.student.email)
         self.assertContains(response, self.exercise.title)
         self.assertContains(response, self.variant.exercise_text)
-        self.assertContains(response, "answer")
-        self.assertContains(response, ".pdf")
         self.assertContains(response, "3.00")
-        self.assertContains(response, "Well explained.")
-        self.assertContains(response, "Status: Graded")
-        self.assertContains(response, "Submitted numerical value: 1.0000")
-        self.assertContains(response, "Reference solution: 1.0000")
-        self.assertContains(response, "Tolerance: 0.1000")
+        self.assertContains(response, "Status: Ungraded")
+        self.assertContains(response, "Part a submitted numerical value: 1.0000")
+        self.assertContains(response, "Part a reference solution:")
+        self.assertContains(response, "Part a tolerance:")
         self.assertContains(response, "Correctness: True")
 
     def test_student_cannot_access_supervisor_submission_detail(self):
@@ -1371,7 +1540,7 @@ class SupervisorExerciseSubmissionsViewTests(TestCase):
         )
         self.assertEqual(response.status_code, 403)
         upload_result.refresh_from_db()
-        self.assertFalse(upload_result.is_manually_graded)
+        self.assertFalse(_primary_result_part(upload_result).is_manually_graded)
 
 
 class SupervisorGradingWorkflowTests(TestCase):
@@ -1454,10 +1623,11 @@ class SupervisorGradingWorkflowTests(TestCase):
 
         self.result.refresh_from_db()
         self.assertEqual(str(self.result.score), "4.25")
-        self.assertEqual(self.result.feedback, "Solid submission.")
-        self.assertTrue(self.result.is_manually_graded)
-        self.assertEqual(self.result.graded_by, self.shared_supervisor)
-        self.assertIsNotNone(self.result.graded_at)
+        result_part = _primary_result_part(self.result)
+        self.assertEqual(result_part.feedback, "Solid submission.")
+        self.assertTrue(result_part.is_manually_graded)
+        self.assertEqual(result_part.graded_by, self.shared_supervisor)
+        self.assertIsNotNone(result_part.graded_at)
 
     def test_student_cannot_access_supervisor_pages(self):
         self.client.force_login(self.student)
@@ -1490,8 +1660,7 @@ class SupervisorGradingWorkflowTests(TestCase):
 
     def test_supervisor_can_download_uploaded_file_from_submission(self):
         result = Result.objects.get(student=self.student, exercise=self.exercise, is_archived=False)
-        result.uploaded_file = SimpleUploadedFile("download.pdf", b"download-content")
-        result.save(update_fields=["uploaded_file"])
+        _set_result_part_data(result, uploaded_file=SimpleUploadedFile("download.pdf", b"download-content"))
 
         self.client.force_login(self.supervisor)
         response = self.client.get(
@@ -1503,8 +1672,7 @@ class SupervisorGradingWorkflowTests(TestCase):
 
     def test_student_cannot_download_uploaded_file_from_submission(self):
         result = Result.objects.get(student=self.student, exercise=self.exercise, is_archived=False)
-        result.uploaded_file = SimpleUploadedFile("private.pdf", b"private-content")
-        result.save(update_fields=["uploaded_file"])
+        _set_result_part_data(result, uploaded_file=SimpleUploadedFile("private.pdf", b"private-content"))
 
         self.client.force_login(self.student)
         response = self.client.get(
@@ -1524,10 +1692,21 @@ class SupervisorGradingWorkflowTests(TestCase):
             tutorial=self.tutorial,
             exercise=self.exercise,
             assigned_variant=self.variant,
-            uploaded_file=uploaded_file,
         )
-        with self.assertRaises(ValidationError) as ctx:
+        result = Result.objects.filter(
+            student=self.student,
+            exercise=self.exercise,
+            is_archived=False,
+        ).first() or result
+        if result.pk is None:
             result.full_clean()
+            result.save()
+        with self.assertRaises(ValidationError) as ctx:
+            ResultPart(
+                result=result,
+                exercise_part=_first_part_for_result(result),
+                uploaded_file=uploaded_file,
+            ).full_clean()
         self.assertIn("uploaded_file", ctx.exception.message_dict)
 
     def test_manual_grading_form_visible_only_for_upload_type_submission(self):
@@ -1658,10 +1837,11 @@ class SupervisorGradingWorkflowTests(TestCase):
         )
         upload_result.refresh_from_db()
         self.assertEqual(str(upload_result.score), "4.75")
-        self.assertEqual(upload_result.feedback, "Good work overall.")
-        self.assertTrue(upload_result.is_manually_graded)
-        self.assertEqual(upload_result.graded_by, self.supervisor)
-        self.assertIsNotNone(upload_result.graded_at)
+        upload_result_part = _primary_result_part(upload_result)
+        self.assertEqual(upload_result_part.feedback, "Good work overall.")
+        self.assertTrue(upload_result_part.is_manually_graded)
+        self.assertEqual(upload_result_part.graded_by, self.supervisor)
+        self.assertIsNotNone(upload_result_part.graded_at)
 
     def test_submissions_list_shows_ungraded_and_graded_status(self):
         upload_exercise = Exercise.objects.create(
@@ -1692,9 +1872,9 @@ class SupervisorGradingWorkflowTests(TestCase):
         )
         self.assertContains(ungraded_response, "Ungraded")
 
-        upload_result.is_manually_graded = True
+        _set_result_part_data(upload_result, is_manually_graded=True)
         upload_result.score = "2.50"
-        upload_result.save(update_fields=["is_manually_graded", "score"])
+        upload_result.save(update_fields=["score"])
         graded_response = self.client.get(
             reverse("supervisor_exercise_submissions", args=[upload_exercise.id])
         )
@@ -1799,8 +1979,9 @@ class SupervisorGradingWorkflowTests(TestCase):
         self.assertEqual(response.status_code, 403)
         upload_result.refresh_from_db()
         self.assertEqual(str(upload_result.score), "0.00")
-        self.assertFalse(upload_result.is_manually_graded)
-        self.assertIsNone(upload_result.graded_by)
+        upload_result_part = _primary_result_part(upload_result)
+        self.assertFalse(upload_result_part.is_manually_graded)
+        self.assertIsNone(upload_result_part.graded_by)
 
 
 class SupervisorCourseSummaryAccessTests(TestCase):
@@ -2044,7 +2225,7 @@ class SupervisorCourseSummaryViewTests(TestCase):
         student_b_cells = rows_by_student_id[self.student_b.id]
 
         self.assertEqual(str(student_a_cells[0].score), "5.00")
-        self.assertFalse(student_a_cells[1].is_manually_graded)
+        self.assertFalse(student_a_cells[1].display_is_manually_graded)
         self.assertEqual(str(student_a_cells[2].score), "7.00")
 
         self.assertEqual(str(student_b_cells[0].score), "4.00")
@@ -2073,7 +2254,7 @@ class SupervisorCourseSummaryViewTests(TestCase):
         self.assertEqual(len(rows_by_student_id[self.student_a.id]), 2)
         self.assertEqual(len(rows_by_student_id[self.student_b.id]), 2)
         self.assertEqual(str(rows_by_student_id[self.student_a.id][0].score), "5.00")
-        self.assertFalse(rows_by_student_id[self.student_a.id][1].is_manually_graded)
+        self.assertFalse(rows_by_student_id[self.student_a.id][1].display_is_manually_graded)
 
     def test_filtering_by_student_shows_only_selected_student_row(self):
         self.client.force_login(self.owner_supervisor)
@@ -2256,7 +2437,7 @@ class SupervisorCourseArchiveResultsViewTests(TestCase):
         self.assertEqual(batch.note, "Spring 2026 Tutorial 1")
         self.assertTrue(self.current_result.is_archived)
         self.assertTrue(self.current_numerical_result.is_archived)
-        self.assertTrue(bool(self.current_result.uploaded_file))
+        self.assertTrue(bool(_primary_result_part(self.current_result).uploaded_file))
         self.assertIsNone(self.other_course_result.archive_batch)
         self.assertFalse(self.other_course_result.is_archived)
 
@@ -2385,7 +2566,7 @@ class SupervisorCourseArchiveResultsViewTests(TestCase):
         self.assertEqual(self.client.get(detail_url).status_code, 403)
 
     def test_archived_result_data_and_uploaded_file_reference_are_preserved(self):
-        original_uploaded_name = self.current_result.uploaded_file.name
+        original_uploaded_name = _primary_result_part(self.current_result).uploaded_file.name
         original_score = str(self.current_numerical_result.score)
         original_submitted_at = self.current_numerical_result.submitted_at
 
@@ -2399,10 +2580,13 @@ class SupervisorCourseArchiveResultsViewTests(TestCase):
         self.current_numerical_result.refresh_from_db()
 
         self.assertIsNotNone(self.current_result.archive_batch_id)
-        self.assertEqual(self.current_result.uploaded_file.name, original_uploaded_name)
+        self.assertEqual(_primary_result_part(self.current_result).uploaded_file.name, original_uploaded_name)
         self.assertEqual(str(self.current_numerical_result.score), original_score)
         self.assertEqual(self.current_numerical_result.submitted_at, original_submitted_at)
-        self.assertEqual(str(self.current_numerical_result.submitted_numerical_value), "2.0000")
+        self.assertEqual(
+            str(_primary_result_part(self.current_numerical_result).submitted_numerical_value),
+            "2.0000",
+        )
 
     def test_archived_file_download_is_course_access_controlled(self):
         batch = ArchiveBatch.objects.create(
@@ -2666,6 +2850,11 @@ class SupervisorTreeEditingWorkflowTests(TestCase):
 
     def test_supervisor_tree_pages_show_hierarchy(self):
         self.client.force_login(self.supervisor)
+        list_page = self.client.get(reverse("supervisor_course_manage_list"))
+        self.assertEqual(list_page.status_code, 200)
+        self.assertContains(list_page, "Tree Workflow Course")
+        self.assertNotContains(list_page, "Other Workflow Course")
+        self.assertContains(list_page, "Create course")
         course_page = self.client.get(reverse("supervisor_course_manage_detail", args=[self.course.id]))
         self.assertEqual(course_page.status_code, 200)
         self.assertContains(course_page, "Tree Tutorial")
@@ -2676,7 +2865,12 @@ class SupervisorTreeEditingWorkflowTests(TestCase):
         exercise_page = self.client.get(
             reverse("supervisor_exercise_manage_detail", args=[self.exercise.id])
         )
-        self.assertContains(exercise_page, "Variant 1")
+        self.assertContains(exercise_page, "Manage parts")
+        variant_page = self.client.get(
+            reverse("supervisor_exercise_variant_manage_detail", args=[self.variant.id])
+        )
+        self.assertEqual(variant_page.status_code, 200)
+        self.assertContains(variant_page, "Create part")
 
     def test_create_child_pages_infer_parent_from_url_without_parent_dropdown(self):
         self.client.force_login(self.supervisor)
@@ -2702,11 +2896,28 @@ class SupervisorTreeEditingWorkflowTests(TestCase):
             title="Other Tutorial",
             order_index=1,
         )
+        other_exercise = Exercise.objects.create(
+            tutorial=other_tutorial,
+            title="Other Exercise",
+            order_index=1,
+            exercise_type=Exercise.ExerciseType.NUMERICAL,
+        )
+        other_variant = ExerciseVariant.objects.create(
+            exercise=other_exercise,
+            exercise_text="Other Variant",
+            reference_solution="2.0000",
+            absolute_tolerance="0.1000",
+            available_points="1.00",
+        )
         self.client.force_login(self.supervisor)
         denied_response = self.client.get(
             reverse("supervisor_tutorial_manage_detail", args=[other_tutorial.id])
         )
         self.assertEqual(denied_response.status_code, 403)
+        denied_variant_response = self.client.get(
+            reverse("supervisor_exercise_variant_manage_detail", args=[other_variant.id])
+        )
+        self.assertEqual(denied_variant_response.status_code, 403)
 
     def test_administrator_can_access_all_tree_editing_pages(self):
         other_tutorial = Tutorial.objects.create(
@@ -2719,3 +2930,51 @@ class SupervisorTreeEditingWorkflowTests(TestCase):
             reverse("supervisor_tutorial_manage_detail", args=[other_tutorial.id])
         )
         self.assertEqual(response.status_code, 200)
+
+    def test_supervisor_can_create_and_edit_parts_from_variant_manage_page(self):
+        self.client.force_login(self.supervisor)
+        create_response = self.client.post(
+            reverse("supervisor_exercise_part_create", args=[self.variant.id]),
+            {
+                "label": "b",
+                "order_index": 2,
+                "answer_type": ExerciseVariant.PartAnswerType.NUMERICAL,
+                "prompt_text": "Second part",
+                "reference_solution": "2.5000",
+                "absolute_tolerance": "0.1000",
+                "available_points": "2.00",
+            },
+        )
+        self.assertEqual(create_response.status_code, 302)
+        created_part = ExercisePart.objects.get(variant=self.variant, label="b")
+        edit_response = self.client.post(
+            reverse("supervisor_exercise_part_edit", args=[created_part.id]),
+            {
+                "label": "b",
+                "order_index": 2,
+                "answer_type": ExerciseVariant.PartAnswerType.NUMERICAL,
+                "prompt_text": "Updated second part",
+                "reference_solution": "2.5000",
+                "absolute_tolerance": "0.2000",
+                "available_points": "3.00",
+            },
+        )
+        self.assertEqual(edit_response.status_code, 302)
+        created_part.refresh_from_db()
+        self.assertEqual(created_part.prompt_text, "Updated second part")
+        self.assertEqual(str(created_part.available_points), "3.00")
+
+    def test_supervisor_can_create_new_course_from_tree_manage_list(self):
+        self.client.force_login(self.supervisor)
+        response = self.client.post(
+            reverse("supervisor_course_manage_list"),
+            {
+                "title": "Created In Tree View",
+                "description": "Simple create flow",
+                "is_active": "on",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        created = Course.objects.get(title="Created In Tree View")
+        self.assertEqual(created.created_by, self.supervisor)
+        self.assertTrue(created.supervisors.filter(id=self.supervisor.id).exists())

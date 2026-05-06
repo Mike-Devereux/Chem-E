@@ -29,8 +29,12 @@
         </form>
         {% if existing_result %}
             <h2>Your latest result</h2>
-            <p>Submitted value: {{ existing_result.submitted_numerical_value }}</p>
-            <p>Correct: {{ existing_result.is_correct }}</p>
+            {% for part_result in existing_result_parts %}
+                {% if part_result.submitted_numerical_value is not None %}
+                    <p>Part {{ part_result.exercise_part.label }} submitted value: {{ part_result.submitted_numerical_value }}</p>
+                    <p>Part {{ part_result.exercise_part.label }} correct: {{ part_result.is_correct }}</p>
+                {% endif %}
+            {% endfor %}
             <p>Score: {{ existing_result.score }}</p>
         {% endif %}
     {% elif exercise.exercise_type == "document_upload" %}
@@ -41,25 +45,27 @@
             <button type="submit">Upload</button>
         </form>
         {% if existing_result %}
-            {% if existing_result.uploaded_file %}
-                <h2>Your latest upload</h2>
-                <p>
-                    <a href="{{ existing_result.uploaded_file.url }}">
-                        {{ existing_result.uploaded_file.name }}
-                    </a>
-                </p>
-            {% endif %}
-            <p>
-                Grading status:
-                {% if existing_result.is_manually_graded %}
-                    Graded
-                {% else %}
-                    Pending manual grading
+            {% for part_result in existing_result_parts %}
+                {% if part_result.uploaded_file %}
+                    <h2>Your latest upload</h2>
+                    <p>
+                        <a href="{{ part_result.uploaded_file.url }}">
+                            {{ part_result.uploaded_file.name }}
+                        </a>
+                    </p>
+                    <p>
+                        Grading status:
+                        {% if part_result.is_manually_graded %}
+                            Graded
+                        {% else %}
+                            Pending manual grading
+                        {% endif %}
+                    </p>
+                    {% if part_result.is_manually_graded %}
+                        <p>Score: {{ part_result.score }}</p>
+                    {% endif %}
                 {% endif %}
-            </p>
-            {% if existing_result.is_manually_graded %}
-                <p>Score: {{ existing_result.score }}</p>
-            {% endif %}
+            {% endfor %}
         {% endif %}
     {% endif %}
 </body>

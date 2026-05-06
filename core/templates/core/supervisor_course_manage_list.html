@@ -7,6 +7,14 @@
 </head>
 <body>
     <h1>Supervisor course editor</h1>
+    <h2>Create new course</h2>
+    <form method="post">
+        {% csrf_token %}
+        {{ course_form.as_p }}
+        <button type="submit">Create course</button>
+    </form>
+
+    <h2>Courses you can edit</h2>
     {% if courses %}
         <ul>
             {% for course in courses %}

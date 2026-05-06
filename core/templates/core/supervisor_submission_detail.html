@@ -10,19 +10,21 @@
     <p>Student: {{ submission.student.email }}</p>
     <p>Exercise: {{ submission.exercise.title }}</p>
     <p>Assigned variant: {{ submission.assigned_variant.exercise_text }}</p>
-    <p>Status: {{ submission.is_manually_graded|yesno:"Graded,Ungraded" }}</p>
+    <p>Status: {% if upload_result_part %}{{ upload_result_part.is_manually_graded|yesno:"Graded,Ungraded" }}{% else %}Ungraded{% endif %}</p>
     {% if submission.exercise.exercise_type == "numerical" %}
-        <p>Submitted numerical value: {{ submission.submitted_numerical_value|default:"-" }}</p>
-        <p>Reference solution: {{ submission.assigned_variant.reference_solution|default:"-" }}</p>
-        <p>Tolerance: {{ submission.assigned_variant.absolute_tolerance|default:"-" }}</p>
+        {% for part_result in submission.parts.all %}
+            <p>Part {{ part_result.exercise_part.label }} submitted numerical value: {{ part_result.submitted_numerical_value|default:"-" }}</p>
+            <p>Part {{ part_result.exercise_part.label }} reference solution: {{ part_result.reference_value_used|default:"-" }}</p>
+            <p>Part {{ part_result.exercise_part.label }} tolerance: {{ part_result.tolerance_used|default:"-" }}</p>
+        {% endfor %}
         <p>Correctness: {{ submission.is_correct|default:"-" }}</p>
     {% endif %}
 
     <p>
         Uploaded file:
-        {% if submission.uploaded_file %}
+        {% if upload_result_part and upload_result_part.uploaded_file %}
             <a href="{% url 'supervisor_submission_file_download' submission.id %}">
-                {{ submission.uploaded_file.name }}
+                {{ upload_result_part.uploaded_file.name }}
             </a>
         {% else %}
             -
@@ -30,8 +32,8 @@
     </p>
 
     <p>Score: {{ submission.score }}</p>
-    {% if submission.feedback %}
-        <p>Feedback: {{ submission.feedback }}</p>
+    {% if upload_result_part and upload_result_part.feedback %}
+        <p>Feedback: {{ upload_result_part.feedback }}</p>
     {% endif %}
 
     {% if submission.exercise.exercise_type == "document_upload" %}

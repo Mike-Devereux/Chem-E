@@ -32,10 +32,10 @@
                         <td>{{ result.tutorial.title }}</td>
                         <td>{{ result.exercise.title }}</td>
                         <td>{{ result.score }}</td>
-                        <td>{{ result.is_manually_graded|yesno:"Graded,Ungraded" }}</td>
+                        <td>{{ result.display_is_manually_graded|yesno:"Graded,Ungraded" }}</td>
                         <td>{{ result.submitted_at }}</td>
                         <td>
-                            {% if result.uploaded_file %}
+                            {% if result.display_uploaded_file %}
                                 <a href="{% url 'supervisor_archived_submission_file_download' result.id %}">Download</a>
                             {% else %}
                                 -

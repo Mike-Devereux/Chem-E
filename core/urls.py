@@ -18,8 +18,11 @@ from .views import (
     SupervisorExerciseCreateView,
     SupervisorExerciseEditView,
     SupervisorExerciseManageDetailView,
+    SupervisorExercisePartCreateView,
+    SupervisorExercisePartEditView,
     SupervisorExerciseVariantCreateView,
     SupervisorExerciseVariantEditView,
+    SupervisorExerciseVariantManageDetailView,
     SupervisorLandingView,
     SupervisorCourseSummaryView,
     SupervisorSubmissionFileDownloadView,
@@ -95,6 +98,21 @@ urlpatterns = [
         "supervisor/variants/<int:variant_id>/edit/",
         SupervisorExerciseVariantEditView.as_view(),
         name="supervisor_exercise_variant_edit",
+    ),
+    path(
+        "supervisor/variants/<int:variant_id>/manage/",
+        SupervisorExerciseVariantManageDetailView.as_view(),
+        name="supervisor_exercise_variant_manage_detail",
+    ),
+    path(
+        "supervisor/variants/<int:variant_id>/parts/new/",
+        SupervisorExercisePartCreateView.as_view(),
+        name="supervisor_exercise_part_create",
+    ),
+    path(
+        "supervisor/parts/<int:part_id>/edit/",
+        SupervisorExercisePartEditView.as_view(),
+        name="supervisor_exercise_part_edit",
     ),
     path(
         "supervisor/submissions/<int:result_id>/",

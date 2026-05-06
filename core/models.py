@@ -170,9 +170,6 @@ class ExerciseVariant(models.Model):
     )
     exercise_text = models.TextField()
     image = models.ImageField(upload_to="exercise_variants/images/", blank=True, null=True)
-    reference_solution = models.DecimalField(max_digits=12, decimal_places=4, blank=True, null=True)
-    absolute_tolerance = models.DecimalField(max_digits=12, decimal_places=4, blank=True, null=True)
-    available_points = models.DecimalField(max_digits=8, decimal_places=2, default=1)
     supervisor_notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -185,29 +182,7 @@ class ExerciseVariant(models.Model):
 
     def clean(self):
         super().clean()
-        errors = {}
-
-        if self.available_points is not None and self.available_points < 0:
-            errors["available_points"] = "Available points must be non-negative."
-        if self.absolute_tolerance is not None and self.absolute_tolerance < 0:
-            errors["absolute_tolerance"] = "Tolerance must be non-negative."
-
-        if self.exercise_id and self.exercise.exercise_type == Exercise.ExerciseType.NUMERICAL:
-            if self.reference_solution is None:
-                errors["reference_solution"] = (
-                    "Reference solution is required for numerical exercises."
-                )
-            if self.absolute_tolerance is None:
-                errors["absolute_tolerance"] = (
-                    "Tolerance is required for numerical exercises."
-                )
-            if self.available_points is None:
-                errors["available_points"] = (
-                    "Available points are required for numerical exercises."
-                )
-
-        if errors:
-            raise ValidationError(errors)
+        return
 
 
 class ArchiveBatch(models.Model):
@@ -269,6 +244,26 @@ class ExercisePart(models.Model):
     def __str__(self):
         return f"{self.variant.exercise.title} - Part {self.label}"
 
+    def clean(self):
+        super().clean()
+        errors = {}
+        if self.available_points is not None and self.available_points < 0:
+            errors["available_points"] = "Available points must be non-negative."
+        if self.absolute_tolerance is not None and self.absolute_tolerance < 0:
+            errors["absolute_tolerance"] = "Tolerance must be non-negative."
+
+        is_numerical_part = self.answer_type == ExerciseVariant.PartAnswerType.NUMERICAL
+        if is_numerical_part:
+            if self.reference_solution is None:
+                errors["reference_solution"] = "Reference solution is required for numerical parts."
+            if self.absolute_tolerance is None:
+                errors["absolute_tolerance"] = "Tolerance is required for numerical parts."
+            if self.available_points is None:
+                errors["available_points"] = "Available points are required for numerical parts."
+
+        if errors:
+            raise ValidationError(errors)
+
 
 class Result(models.Model):
     student = models.ForeignKey(
@@ -296,26 +291,9 @@ class Result(models.Model):
         on_delete=models.PROTECT,
         related_name="results",
     )
-    submitted_numerical_value = models.DecimalField(max_digits=12, decimal_places=4, blank=True, null=True)
-    uploaded_file = models.FileField(
-        upload_to="student_submissions/",
-        blank=True,
-        null=True,
-        validators=[validate_student_submission_file],
-    )
     score = models.DecimalField(max_digits=8, decimal_places=2, default=0)
     is_correct = models.BooleanField(blank=True, null=True)
-    is_manually_graded = models.BooleanField(default=False)
-    feedback = models.TextField(blank=True)
     submitted_at = models.DateTimeField(auto_now_add=True)
-    graded_at = models.DateTimeField(blank=True, null=True)
-    graded_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        related_name="graded_results",
-        blank=True,
-        null=True,
-    )
     archive_batch = models.ForeignKey(
         ArchiveBatch,
         on_delete=models.PROTECT,
@@ -366,8 +344,20 @@ class ResultPart(models.Model):
         null=True,
         validators=[validate_student_submission_file],
     )
+    reference_value_used = models.DecimalField(max_digits=12, decimal_places=4, blank=True, null=True)
+    tolerance_used = models.DecimalField(max_digits=12, decimal_places=4, blank=True, null=True)
     is_correct = models.BooleanField(blank=True, null=True)
     score = models.DecimalField(max_digits=8, decimal_places=2, default=0)
+    is_manually_graded = models.BooleanField(default=False)
+    feedback = models.TextField(blank=True)
+    graded_at = models.DateTimeField(blank=True, null=True)
+    graded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="graded_result_parts",
+        blank=True,
+        null=True,
+    )
     submitted_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

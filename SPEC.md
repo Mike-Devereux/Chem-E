@@ -17,7 +17,7 @@ Students can:
 * view available courses;
 * select a course;
 * view available tutorials/sessions within that course;
-* view exercises that are currently active/unlocked that belong to that tutorial;
+* view exercises that are currently active that belong to that tutorial;
 * complete or modify exercises by either:
 
   * entering a numerical answer; or
@@ -91,6 +91,7 @@ Course
 └── Tutorial / Session
     └── Exercise
         └── Exercise variant(s)
+            └── ExercisePart(s)
 ```
 
 ### 4.1 Course
@@ -132,7 +133,7 @@ An exercise has:
 
   * numerical answer; or
   * document upload;
-* active/unlocked status;
+* active status;
 * lock status;
 * creation timestamp;
 * last modified timestamp.
@@ -159,7 +160,7 @@ Each part has:
 * label (e.g. "a", "b", "c", "d");
 * ordering within the variant;
 * prompt text;
-* answer type (initially numerical; later possibly document upload);
+* answer type (numerical or document upload);
 * reference solution (if numerical);
 * tolerance (if numerical);
 * available points;
@@ -184,7 +185,7 @@ The system should support a tolerance mechanism.
 
 Initial implementation:
 
-* absolute tolerance, configurable per exercise or variant;
+* absolute tolerance, configurable per part;
 
 Stored result should include:
 
@@ -197,14 +198,14 @@ Stored result should include:
 
 ### 6.2 Document upload
 
-For document-upload exercises:
+For document-upload ExerciseParts:
 
 * the student uploads a file;
 * the file is stored securely;
 * the supervisor can download/review the uploaded file;
 * the supervisor manually enters a result/score.
 
-Stored result should include:
+Stored ResultPart should include:
 
 * file name;
 * stored file path or object key;
@@ -223,7 +224,7 @@ Students should be able to:
 3. View available courses.
 4. Select a course.
 5. View tutorials/sessions in the course.
-6. View currently active/unlocked exercises.
+6. View currently active exercises.
 7. Select an exercise.
 8. Receive one randomly assigned variant of the exercise.
 9. Submit either:
@@ -242,17 +243,28 @@ Supervisors should be able to:
 1. Log in.
 2. Open supervisor dashboard.
 3. Create a course.
-4. Add tutorials/sessions to the course.
-5. Add exercises to tutorials.
+4. For each course:
+   * Enter a course title;
+   * Add tutorials to the course;
+5. For each tutorial:
+   * enter a tutorial title;
+   * deactivate or activate the tutorial;
+   * add exercises to tutorials.
 6. For each exercise:
-
    * enter exercise title;
-   * choose input type: numerical answer or document upload;
-   * enter one or more alternative exercise texts;
+   * add exercise variants to exercises.
+   * deactivate or activate the exercise.
+7. For each variant:
+   * enter an exercise variant text;
    * upload images if needed;
-   * enter reference solutions for numerical variants;
+   * add exercise parts to variant.
+10. For each exercise part:
+   * enter an exercise part text;
+   * upload images if needed;
+   * choose input type: numerical answer or document upload;
+   * enter reference solutions for numerical exercise parts;
    * set tolerance for numerical checking;
-   * lock or activate the exercise.
+   * set points available;
 7. View student submissions per exercise.
 8. Download uploaded student files.
 9. Manually grade document-upload exercises.
@@ -288,6 +300,12 @@ Each ResultPart corresponds to one ExercisePart and stores:
 * score;
 * submission timestamp;
 * uploaded file reference, if applicable;
+* reference value used;
+* tolerance used;
+* manual grading status;
+* graded timestamp;
+* feedback, optional;
+* submitted timestamp;
 
 The total Result score is the sum of the scores of its ResultParts.
 
@@ -301,10 +319,6 @@ A result record should include:
 * assigned variant ID;
 * total score;
 * correctness status;
-* manual grading status;
-* feedback, optional;
-* submitted timestamp;
-* graded timestamp;
 * archived flag or archive batch ID.
 
 ### 9.2 Course summary page
@@ -346,8 +360,8 @@ Supervisors can control exercise availability.
 
 Each exercise should have at least one availability state:
 
-* locked/inactive: students cannot attempt it;
-* active/unlocked: students can attempt it.
+* inactive: students cannot attempt it;
+* active: students can attempt it.
 
 Possible future states:
 
@@ -358,7 +372,7 @@ Possible future states:
 
 Initial implementation:
 
-* use a simple boolean `is_active` or `is_unlocked` field.
+* use a simple boolean `is_active` field.
 
 ## 11. File uploads
 
@@ -435,7 +449,7 @@ The first working version should include:
    * text variant(s);
    * numerical answer type;
    * document-upload type;
-   * active/locked status.
+   * active/inactive status.
 8. Students can view courses/tutorials/exercises.
 9. Students can submit numerical answers.
 10. Numerical answers are automatically checked.
