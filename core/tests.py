@@ -2283,6 +2283,30 @@ class SupervisorCourseSummaryViewTests(TestCase):
         self.assertContains(response, f"<th>{self.student_b.email}</th>", html=True)
         self.assertNotContains(response, f"<th>{self.student_a.email}</th>", html=True)
 
+    def test_summary_cells_link_to_submission_detail_for_graded_and_ungraded_results(self):
+        self.client.force_login(self.owner_supervisor)
+        response = self.client.get(reverse("supervisor_course_summary", args=[self.course.id]))
+        self.assertEqual(response.status_code, 200)
+
+        graded_result = Result.objects.get(
+            student=self.student_a,
+            exercise=self.exercise_1,
+            archive_batch__isnull=True,
+        )
+        ungraded_result = Result.objects.get(
+            student=self.student_a,
+            exercise=self.exercise_2,
+            archive_batch__isnull=True,
+        )
+        self.assertContains(
+            response,
+            reverse("supervisor_submission_detail", args=[graded_result.id]),
+        )
+        self.assertContains(
+            response,
+            reverse("supervisor_submission_detail", args=[ungraded_result.id]),
+        )
+
     def test_access_control_for_summary_endpoint(self):
         summary_url = reverse("supervisor_course_summary", args=[self.course.id])
 
