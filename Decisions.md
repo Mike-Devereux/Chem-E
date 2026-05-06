@@ -11,6 +11,8 @@
 - ImageField is used for image uploads
 
 - Courses may have multiple supervisors.
+- course.supervisors groups for each course act as access lists, containing all administrators, the course owner, and supervisors added by administrators
+
 - Course.creator records who created the course.
 - Course.supervisors defines which supervisors can manage the course.
 - Administrators can manage all courses.

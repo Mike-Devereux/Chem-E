@@ -867,6 +867,24 @@ class Phase3SupervisorAdminTests(TestCase):
         self.assertEqual(len(mail.outbox), 1)
         self.assertIn(self.student.email, mail.outbox[0].to)
 
+    def test_administrators_are_auto_added_to_course_supervisors(self):
+        self.assertTrue(self.course_a.supervisors.filter(id=self.administrator.id).exists())
+        self.assertTrue(self.course_b.supervisors.filter(id=self.administrator.id).exists())
+
+    def test_supervisor_creator_is_not_auto_added_to_course_supervisors(self):
+        self.assertFalse(self.course_a.supervisors.filter(id=self.supervisor_a.id).exists())
+
+    def test_course_supervisors_field_only_lists_supervisors_and_admins(self):
+        model_admin = admin.site._registry[Course]
+        request = RequestFactory().get("/")
+        request.user = self.administrator
+        form_class = model_admin.get_form(request, obj=self.course_a)
+        form = form_class(instance=self.course_a)
+        supervisors_queryset = form.fields["supervisors"].queryset
+        self.assertIn(self.supervisor_b, supervisors_queryset)
+        self.assertIn(self.administrator, supervisors_queryset)
+        self.assertNotIn(self.student, supervisors_queryset)
+
 
 class ExerciseVariantAssignmentTests(TestCase):
     def setUp(self):
@@ -1383,7 +1401,7 @@ class SupervisorExerciseSubmissionsViewTests(TestCase):
             role=User.Role.ADMINISTRATOR,
         )
         self.course = Course.objects.create(title="Submissions Course", created_by=self.supervisor)
-        self.course.supervisors.add(self.shared_supervisor)
+        self.course.supervisors.add(self.supervisor, self.shared_supervisor)
         self.tutorial = Tutorial.objects.create(course=self.course, title="Week 1", order_index=1)
         self.exercise = Exercise.objects.create(
             tutorial=self.tutorial,
@@ -1584,7 +1602,7 @@ class SupervisorGradingWorkflowTests(TestCase):
             title="Workflow Course",
             created_by=self.course_owner,
         )
-        self.course.supervisors.add(self.shared_supervisor)
+        self.course.supervisors.add(self.course_owner, self.shared_supervisor)
         self.tutorial = Tutorial.objects.create(
             course=self.course,
             title="Workflow Tutorial",
@@ -2022,7 +2040,7 @@ class SupervisorCourseSummaryAccessTests(TestCase):
             title="Summary Access Course",
             created_by=self.course_owner,
         )
-        self.course.supervisors.add(self.shared_supervisor)
+        self.course.supervisors.add(self.course_owner, self.shared_supervisor)
         self.tutorial = Tutorial.objects.create(
             course=self.course,
             title="Summary Tutorial",
@@ -2117,7 +2135,7 @@ class SupervisorCourseSummaryViewTests(TestCase):
             title="Summary Matrix Course",
             created_by=self.owner_supervisor,
         )
-        self.course.supervisors.add(self.shared_supervisor)
+        self.course.supervisors.add(self.owner_supervisor, self.shared_supervisor)
 
         self.tutorial_1 = Tutorial.objects.create(
             course=self.course,
@@ -2362,7 +2380,7 @@ class SupervisorCourseArchiveResultsViewTests(TestCase):
             title="Archive Course",
             created_by=self.owner_supervisor,
         )
-        self.course.supervisors.add(self.shared_supervisor)
+        self.course.supervisors.add(self.owner_supervisor, self.shared_supervisor)
         self.other_course = Course.objects.create(
             title="Archive Other Course",
             created_by=self.administrator,
@@ -3023,7 +3041,7 @@ class SupervisorTreeEditingWorkflowTests(TestCase):
         self.assertEqual(response.status_code, 302)
         created = Course.objects.get(title="Created In Tree View")
         self.assertEqual(created.created_by, self.supervisor)
-        self.assertTrue(created.supervisors.filter(id=self.supervisor.id).exists())
+        self.assertFalse(created.supervisors.filter(id=self.supervisor.id).exists())
 
     def test_create_tutorial_page_prefills_next_available_order_index(self):
         Tutorial.objects.create(course=self.course, title="Tree Tutorial 2", order_index=4)

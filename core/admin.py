@@ -192,8 +192,24 @@ class CourseAdmin(SupervisorOwnedContentAdmin):
         if not change and self._is_supervisor(request.user):
             obj.created_by = request.user
         super().save_model(request, obj, form, change)
-        if self._is_supervisor(request.user):
-            obj.supervisors.add(request.user)
+
+    def save_related(self, request, form, formsets, change):
+        super().save_related(request, form, formsets, change)
+        course = form.instance
+        admin_users = User.objects.filter(
+            Q(is_superuser=True) | Q(role=User.Role.ADMINISTRATOR)
+        )
+        for admin_user in admin_users.exclude(courses_supervised=course):
+            course.supervisors.add(admin_user)
+
+    def formfield_for_manytomany(self, db_field, request, **kwargs):
+        if db_field.name == "supervisors":
+            kwargs["queryset"] = User.objects.filter(
+                Q(role=User.Role.SUPERVISOR)
+                | Q(role=User.Role.ADMINISTRATOR)
+                | Q(is_superuser=True)
+            ).distinct()
+        return super().formfield_for_manytomany(db_field, request, **kwargs)
 
 
 @admin.register(Tutorial)

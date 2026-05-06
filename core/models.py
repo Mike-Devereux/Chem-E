@@ -65,6 +65,9 @@ class User(AbstractUser):
         else:
             self.is_staff = False
         super().save(*args, **kwargs)
+        if self.is_superuser or self.role == self.Role.ADMINISTRATOR:
+            for course in Course.objects.exclude(supervisors=self):
+                course.supervisors.add(self)
 
 
 class Course(models.Model):
@@ -88,8 +91,11 @@ class Course(models.Model):
 
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
-        if self.created_by_id:
-            self.supervisors.add(self.created_by)
+        admin_users = User.objects.filter(
+            models.Q(is_superuser=True) | models.Q(role=User.Role.ADMINISTRATOR)
+        )
+        for admin_user in admin_users.exclude(courses_supervised=self):
+            self.supervisors.add(admin_user)
 
 
 class Tutorial(models.Model):
