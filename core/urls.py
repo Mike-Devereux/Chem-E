@@ -38,6 +38,11 @@ urlpatterns = [
     path("", CourseListView.as_view(), name="home"),
     path("courses/<int:pk>/", CourseDetailView.as_view(), name="course_detail"),
     path("tutorials/<int:pk>/", TutorialDetailView.as_view(), name="tutorial_detail"),
+    path(
+        "exercises/<int:pk>/assigned/",
+        ExerciseDetailView.as_view(),
+        name="student_assigned_exercise_detail",
+    ),
     path("exercises/<int:pk>/", ExerciseDetailView.as_view(), name="exercise_detail"),
     path(
         "supervisor/exercises/<int:exercise_id>/submissions/",

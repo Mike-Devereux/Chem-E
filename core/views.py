@@ -691,6 +691,123 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
         has_numerical_parts = parts.filter(
             answer_type=ExerciseVariant.PartAnswerType.NUMERICAL
         ).exists()
+        has_part_numerical_submission = any(
+            key.startswith("numerical_part_") for key in request.POST.keys()
+        )
+        has_part_upload_submission = any(
+            key.startswith("upload_part_") for key in request.FILES.keys()
+        )
+
+        if (has_part_numerical_submission or has_part_upload_submission) and result:
+            submission_errors = []
+            numerical_correct_flags = []
+            has_saved_part_submission = False
+
+            for part in parts:
+                if part.answer_type == ExerciseVariant.PartAnswerType.NUMERICAL:
+                    raw_value = request.POST.get(f"numerical_part_{part.id}", "").strip()
+                    if raw_value == "":
+                        continue
+                    try:
+                        submitted_value = Decimal(raw_value)
+                    except Exception:
+                        submission_errors.append(
+                            f"Part {part.label}: enter a valid numerical value."
+                        )
+                        continue
+
+                    has_saved_part_submission = True
+                    is_correct = None
+                    score = Decimal("0")
+                    if (
+                        part.reference_solution is not None
+                        and part.absolute_tolerance is not None
+                    ):
+                        is_correct = is_numerical_answer_correct(
+                            submitted_value=submitted_value,
+                            reference_solution=part.reference_solution,
+                            absolute_tolerance=part.absolute_tolerance,
+                        )
+                        numerical_correct_flags.append(bool(is_correct))
+                        score = part.available_points if is_correct else Decimal("0")
+
+                    ResultPart.objects.update_or_create(
+                        result=result,
+                        exercise_part=part,
+                        defaults={
+                            "submitted_numerical_value": submitted_value,
+                            "uploaded_file": None,
+                            "reference_value_used": part.reference_solution,
+                            "tolerance_used": part.absolute_tolerance,
+                            "is_correct": is_correct,
+                            "score": score,
+                            "is_manually_graded": True,
+                            "feedback": "",
+                            "graded_at": timezone.now(),
+                            "graded_by": None,
+                        },
+                    )
+                else:
+                    uploaded_file = request.FILES.get(f"upload_part_{part.id}")
+                    if not uploaded_file:
+                        continue
+                    upload_result_part = ResultPart.objects.filter(
+                        result=result,
+                        exercise_part=part,
+                    ).first()
+                    if upload_result_part and upload_result_part.is_manually_graded:
+                        submission_errors.append(
+                            f"Part {part.label}: this upload has already been manually graded and cannot be replaced."
+                        )
+                        continue
+                    has_saved_part_submission = True
+                    old_file_name = (
+                        upload_result_part.uploaded_file.name
+                        if upload_result_part and upload_result_part.uploaded_file
+                        else None
+                    )
+                    ResultPart.objects.update_or_create(
+                        result=result,
+                        exercise_part=part,
+                        defaults={
+                            "submitted_numerical_value": None,
+                            "uploaded_file": uploaded_file,
+                            "reference_value_used": None,
+                            "tolerance_used": None,
+                            "is_correct": None,
+                            "score": Decimal("0"),
+                            "is_manually_graded": False,
+                            "feedback": "",
+                            "graded_at": None,
+                            "graded_by": None,
+                        },
+                    )
+                    new_upload_result_part = ResultPart.objects.get(
+                        result=result,
+                        exercise_part=part,
+                    )
+                    if (
+                        old_file_name
+                        and new_upload_result_part.uploaded_file
+                        and old_file_name != new_upload_result_part.uploaded_file.name
+                        and default_storage.exists(old_file_name)
+                    ):
+                        default_storage.delete(old_file_name)
+
+            if submission_errors:
+                context = self.get_context_data()
+                context["submission_errors"] = submission_errors
+                return self.render_to_response(context)
+
+            if has_saved_part_submission:
+                result.submitted_at = timezone.now()
+                result.is_correct = (
+                    all(numerical_correct_flags) if numerical_correct_flags else None
+                )
+                result.save(update_fields=["submitted_at", "is_correct"])
+                result.recompute_total_score()
+                result.save(update_fields=["score"])
+            return self.render_to_response(self.get_context_data())
 
         if has_upload_parts and "uploaded_file" in request.FILES:
             form = UploadSubmissionForm(request.POST, request.FILES)
@@ -947,16 +1064,15 @@ class SupervisorCourseSummaryView(SupervisorRequiredMixin, DetailView):
             except (StopIteration, ValueError):
                 selected_tutorial = None
 
-        exercises_queryset = Exercise.objects.filter(
-            tutorial__course=self.object,
-            is_active=True,
-        )
-        if selected_tutorial:
-            exercises_queryset = exercises_queryset.filter(tutorial=selected_tutorial)
+        tutorial_ids = [selected_tutorial.id] if selected_tutorial else [tutorial.id for tutorial in tutorials]
         exercises = list(
-            exercises_queryset.select_related("tutorial").order_by(
-                "tutorial__order_index", "tutorial_id", "order_index", "id"
+            Exercise.objects.filter(
+                tutorial__course=self.object,
+                tutorial_id__in=tutorial_ids,
+                is_active=True,
             )
+            .select_related("tutorial")
+            .order_by("tutorial__order_index", "tutorial_id", "order_index", "id")
         )
         exercise_ids = [exercise.id for exercise in exercises]
         all_results = list(
@@ -984,30 +1100,54 @@ class SupervisorCourseSummaryView(SupervisorRequiredMixin, DetailView):
             if selected_student
             else all_results
         )
-        for result in results:
-            upload_part = _result_upload_part(result)
-            result.display_is_manually_graded = _result_display_is_graded(result)
-            result.display_has_submission = _result_has_submission_data(result)
-            result.display_uploaded_file = upload_part.uploaded_file if upload_part else None
-
-        results_by_student_exercise = {
-            student.id: {exercise.id: None for exercise in exercises} for student in students
+        result_ids = [result.id for result in results]
+        result_parts = list(
+            ResultPart.objects.filter(result_id__in=result_ids).select_related("exercise_part")
+        )
+        result_by_student_exercise = {
+            (result.student_id, result.exercise_id): result for result in results
         }
-        for result in results:
-            student_results = results_by_student_exercise.setdefault(result.student_id, {})
-            student_results[result.exercise_id] = result
+        result_part_by_result_part = {
+            (result_part.result_id, result_part.exercise_part_id): result_part
+            for result_part in result_parts
+        }
 
-        summary_rows = []
-        for student in students:
-            exercise_results = results_by_student_exercise.get(student.id, {})
-            cells = [exercise_results.get(exercise.id) for exercise in exercises]
-            summary_rows.append({"student": student, "cells": cells})
+        tutorial_tables = []
+        tutorials_to_show = [selected_tutorial] if selected_tutorial else tutorials
+        for tutorial in tutorials_to_show:
+            tutorial_exercises = [exercise for exercise in exercises if exercise.tutorial_id == tutorial.id]
+            exercise_parts = list(
+                ExercisePart.objects.filter(variant__exercise__in=tutorial_exercises)
+                .select_related("variant__exercise")
+                .order_by(
+                    "variant__exercise__order_index",
+                    "variant__exercise_id",
+                    "order_index",
+                    "id",
+                )
+            )
+            rows = []
+            for student in students:
+                cells = []
+                for part in exercise_parts:
+                    result = result_by_student_exercise.get((student.id, part.variant.exercise_id))
+                    result_part = (
+                        result_part_by_result_part.get((result.id, part.id))
+                        if result
+                        else None
+                    )
+                    cells.append(result_part)
+                rows.append({"student": student, "cells": cells})
+            tutorial_tables.append(
+                {
+                    "tutorial": tutorial,
+                    "columns": exercise_parts,
+                    "rows": rows,
+                }
+            )
 
-        context["exercises"] = exercises
-        context["students"] = students
+        context["tutorial_tables"] = tutorial_tables
         context["results"] = results
-        context["results_by_student_exercise"] = results_by_student_exercise
-        context["summary_rows"] = summary_rows
         context["tutorials"] = tutorials
         context["selected_tutorial"] = selected_tutorial
         context["selected_tutorial_id"] = str(selected_tutorial.id) if selected_tutorial else ""

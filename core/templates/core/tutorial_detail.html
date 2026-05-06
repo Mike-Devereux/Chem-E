@@ -17,7 +17,7 @@
         <ul>
             {% for exercise in exercises %}
                 <li>
-                    <a href="{% url 'exercise_detail' exercise.pk %}">{{ exercise.title }}</a>
+                    <a href="{% url 'student_assigned_exercise_detail' exercise.pk %}">{{ exercise.title }}</a>
                 </li>
             {% endfor %}
         </ul>

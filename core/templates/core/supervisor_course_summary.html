@@ -38,35 +38,38 @@
         <span class="cell-ungraded">Ungraded submission</span> |
         <span class="cell-graded">Score = Graded submission</span>
     </p>
-    <table border="1" cellpadding="4" cellspacing="0">
-        <thead>
-            <tr>
-                <th>Student</th>
-                {% for exercise in exercises %}
-                    <th>{{ exercise.title }}</th>
-                {% endfor %}
-            </tr>
-        </thead>
-        <tbody>
-            {% for row in summary_rows %}
+    {% for table in tutorial_tables %}
+        <h2>{{ table.tutorial.title }}</h2>
+        <table border="1" cellpadding="4" cellspacing="0">
+            <thead>
                 <tr>
-                    <th>{{ row.student.email }}</th>
-                    {% for result in row.cells %}
-                        {% if result %}
-                            {% if result.display_is_manually_graded %}
-                                <td class="cell-graded">{{ result.score }}</td>
-                            {% elif result.display_has_submission %}
-                                <td class="cell-ungraded">Ungraded</td>
+                    <th>Student</th>
+                    {% for part in table.columns %}
+                        <th>{{ part.variant.exercise.title }} - Part {{ part.label }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in table.rows %}
+                    <tr>
+                        <th>{{ row.student.email }}</th>
+                        {% for result_part in row.cells %}
+                            {% if result_part %}
+                                {% if result_part.exercise_part.answer_type == "document_upload" and not result_part.is_manually_graded %}
+                                    <td class="cell-ungraded">Ungraded</td>
+                                {% else %}
+                                    <td class="cell-graded">{{ result_part.score }}</td>
+                                {% endif %}
                             {% else %}
                                 <td class="cell-missing">-</td>
                             {% endif %}
-                        {% else %}
-                            <td class="cell-missing">-</td>
-                        {% endif %}
-                    {% endfor %}
-                </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+                        {% endfor %}
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% empty %}
+        <p>No tutorial results available for this filter selection.</p>
+    {% endfor %}
 </body>
 </html>

@@ -960,6 +960,15 @@ class ExerciseVariantAssignmentTests(TestCase):
             1,
         )
 
+    def test_tutorial_page_links_to_student_assigned_exercise_route(self):
+        self.client.force_login(self.student)
+        response = self.client.get(reverse("tutorial_detail", args=[self.tutorial.id]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            reverse("student_assigned_exercise_detail", args=[self.exercise.id]),
+        )
+
 
 class NumericalAnswerFormViewTests(TestCase):
     def setUp(self):
@@ -2212,23 +2221,29 @@ class SupervisorCourseSummaryViewTests(TestCase):
         response = self.client.get(reverse("supervisor_course_summary", args=[self.course.id]))
         self.assertEqual(response.status_code, 200)
 
-        exercises = response.context["exercises"]
-        exercise_ids = [exercise.id for exercise in exercises]
-        self.assertEqual(exercise_ids, [self.exercise_1.id, self.exercise_2.id, self.exercise_3.id])
+        tutorial_tables = response.context["tutorial_tables"]
+        self.assertEqual(len(tutorial_tables), 2)
+        tutorial_1_table = next(
+            table for table in tutorial_tables if table["tutorial"].id == self.tutorial_1.id
+        )
+        tutorial_2_table = next(
+            table for table in tutorial_tables if table["tutorial"].id == self.tutorial_2.id
+        )
 
-        rows_by_student_id = {
-            row["student"].id: row["cells"] for row in response.context["summary_rows"]
+        rows_by_student_id_t1 = {
+            row["student"].id: row["cells"] for row in tutorial_1_table["rows"]
         }
-        student_a_cells = rows_by_student_id[self.student_a.id]
-        student_b_cells = rows_by_student_id[self.student_b.id]
+        rows_by_student_id_t2 = {
+            row["student"].id: row["cells"] for row in tutorial_2_table["rows"]
+        }
 
-        self.assertEqual(str(student_a_cells[0].score), "5.00")
-        self.assertFalse(student_a_cells[1].display_is_manually_graded)
-        self.assertEqual(str(student_a_cells[2].score), "7.00")
+        self.assertEqual(str(rows_by_student_id_t1[self.student_a.id][0].score), "5.00")
+        self.assertFalse(rows_by_student_id_t1[self.student_a.id][1].is_manually_graded)
+        self.assertEqual(str(rows_by_student_id_t2[self.student_a.id][0].score), "7.00")
 
-        self.assertEqual(str(student_b_cells[0].score), "4.00")
-        self.assertIsNone(student_b_cells[1])
-        self.assertIsNone(student_b_cells[2])
+        self.assertEqual(str(rows_by_student_id_t1[self.student_b.id][0].score), "4.00")
+        self.assertIsNone(rows_by_student_id_t1[self.student_b.id][1])
+        self.assertIsNone(rows_by_student_id_t2[self.student_b.id][0])
 
         self.assertContains(response, "5.00")
         self.assertContains(response, "4.00")
@@ -2243,16 +2258,17 @@ class SupervisorCourseSummaryViewTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
 
-        exercise_ids = [exercise.id for exercise in response.context["exercises"]]
-        self.assertEqual(exercise_ids, [self.exercise_1.id, self.exercise_2.id])
+        tutorial_tables = response.context["tutorial_tables"]
+        self.assertEqual(len(tutorial_tables), 1)
+        self.assertEqual(tutorial_tables[0]["tutorial"].id, self.tutorial_1.id)
 
         rows_by_student_id = {
-            row["student"].id: row["cells"] for row in response.context["summary_rows"]
+            row["student"].id: row["cells"] for row in tutorial_tables[0]["rows"]
         }
         self.assertEqual(len(rows_by_student_id[self.student_a.id]), 2)
         self.assertEqual(len(rows_by_student_id[self.student_b.id]), 2)
         self.assertEqual(str(rows_by_student_id[self.student_a.id][0].score), "5.00")
-        self.assertFalse(rows_by_student_id[self.student_a.id][1].display_is_manually_graded)
+        self.assertFalse(rows_by_student_id[self.student_a.id][1].is_manually_graded)
 
     def test_filtering_by_student_shows_only_selected_student_row(self):
         self.client.force_login(self.owner_supervisor)
@@ -2261,8 +2277,9 @@ class SupervisorCourseSummaryViewTests(TestCase):
             {"student_id": str(self.student_b.id)},
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.context["summary_rows"]), 1)
-        self.assertEqual(response.context["summary_rows"][0]["student"].id, self.student_b.id)
+        for table in response.context["tutorial_tables"]:
+            self.assertEqual(len(table["rows"]), 1)
+            self.assertEqual(table["rows"][0]["student"].id, self.student_b.id)
         self.assertContains(response, f"<th>{self.student_b.email}</th>", html=True)
         self.assertNotContains(response, f"<th>{self.student_a.email}</th>", html=True)
 
