@@ -21,13 +21,9 @@
     {% endif %}
 
     {% if parts %}
-        {% if has_numerical_parts %}
-            <h2>Submit numerical answer</h2>
-        {% endif %}
         {% if has_upload_parts %}
             <h2>Upload solution file</h2>
         {% endif %}
-        <h3>Submit solutions</h3>
         {% if submission_errors %}
             <ul>
                 {% for error in submission_errors %}
@@ -45,52 +41,29 @@
             {% csrf_token %}
             {% for part in parts %}
                 <fieldset>
-                    <legend>Part {{ part.label }}</legend>
+                    <legend>Teil {{ part.label }}</legend>
                     {% if part.prompt_text %}
                         <p>{{ part.prompt_text }}</p>
                     {% endif %}
                     {% if part.answer_type == "numerical" %}
-                        <label for="numerical_part_{{ part.id }}">Numerical answer</label>
-                        <input id="numerical_part_{{ part.id }}" name="numerical_part_{{ part.id }}" type="text">
+                        <label for="numerical_part_{{ part.id }}">
+                            Lösung{% if part.display_tolerance != "0" %} (Präzision +/- {{ part.display_tolerance }}){% endif %}
+                        </label>
+                        <input id="numerical_part_{{ part.id }}" name="numerical_part_{{ part.id }}" type="text" value="{{ part.prefill_numerical_value|default_if_none:'' }}">
+                        {% if part.points_display %}
+                            <span>{{ part.points_display }}</span>
+                        {% endif %}
                     {% elif part.answer_type == "document_upload" %}
                         <label for="upload_part_{{ part.id }}">Upload solution file</label>
                         <input id="upload_part_{{ part.id }}" name="upload_part_{{ part.id }}" type="file">
+                        {% if part.points_display %}
+                            <span>{{ part.points_display }}</span>
+                        {% endif %}
                     {% endif %}
                 </fieldset>
             {% endfor %}
             <button type="submit">Submit</button>
         </form>
-    {% endif %}
-
-    {% if existing_result %}
-        <h2>Your latest result</h2>
-        {% for part_result in existing_result_parts %}
-            {% if part_result.submitted_numerical_value is not None %}
-                <p>Part {{ part_result.exercise_part.label }} submitted value: {{ part_result.submitted_numerical_value }}</p>
-                <p>Part {{ part_result.exercise_part.label }} correct: {{ part_result.is_correct }}</p>
-            {% endif %}
-            {% if part_result.uploaded_file %}
-                <h2>Your latest upload</h2>
-                <p>
-                    Part {{ part_result.exercise_part.label }} upload:
-                    <a href="{{ part_result.uploaded_file.url }}">
-                        {{ part_result.uploaded_file.name }}
-                    </a>
-                </p>
-                <p>
-                    Grading status:
-                    {% if part_result.is_manually_graded %}
-                        Graded
-                    {% else %}
-                        Pending manual grading
-                    {% endif %}
-                </p>
-                {% if part_result.is_manually_graded %}
-                    <p>Part {{ part_result.exercise_part.label }} score: {{ part_result.score }}</p>
-                {% endif %}
-            {% endif %}
-        {% endfor %}
-        <p>Score: {{ existing_result.score }}</p>
     {% endif %}
 </body>
 </html>

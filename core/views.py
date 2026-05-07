@@ -64,6 +64,18 @@ def _result_display_is_graded(result):
     return bool(upload_part and upload_part.is_manually_graded)
 
 
+def _format_decimal_compact(value):
+    if value is None:
+        return ""
+    normalized = value.normalize()
+    rendered = format(normalized, "f")
+    if "." in rendered:
+        trimmed = rendered.rstrip("0").rstrip(".")
+    else:
+        trimmed = rendered
+    return trimmed if trimmed else "0"
+
+
 def _user_can_access_course(user, course):
     if user.is_superuser or user.role == User.Role.ADMINISTRATOR:
         return True
@@ -553,8 +565,8 @@ class TutorialDetailView(LoginRequiredMixin, DetailView):
                 {
                     "exercise": exercise,
                     "status": status,
-                    "score_display": f"{score:.2f}",
-                    "total_display": f"{total_points:.2f}",
+                    "score_display": _format_decimal_compact(score),
+                    "total_display": _format_decimal_compact(total_points),
                 }
             )
         context["exercise_rows"] = exercise_rows
@@ -569,26 +581,39 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         variant = None
+        result = None
         if self.request.user.role == User.Role.STUDENT:
             result = self._get_or_assign_student_result()
             variant = result.assigned_variant if result else None
             context["variant"] = variant
-            context["existing_result"] = (
-                result
-                if result
-                and _result_has_submission_data(result)
-                else None
-            )
-            if context["existing_result"]:
-                context["existing_result_parts"] = (
-                    context["existing_result"]
-                    .parts.select_related("exercise_part")
-                    .order_by("exercise_part__order_index", "id")
-                )
         else:
             variant = self.object.variants.order_by("id").first()
             context["variant"] = variant
         parts = variant.parts.order_by("order_index", "id") if variant else []
+        existing_parts_by_exercise_part_id = {}
+        if result:
+            existing_parts_by_exercise_part_id = {
+                result_part.exercise_part_id: result_part
+                for result_part in result.parts.select_related("exercise_part")
+            }
+        for part in parts:
+            if part.absolute_tolerance is None:
+                part.display_tolerance = ""
+            else:
+                part.display_tolerance = _format_decimal_compact(part.absolute_tolerance)
+            part.saved_result_part = existing_parts_by_exercise_part_id.get(part.id)
+            part.prefill_numerical_value = (
+                _format_decimal_compact(part.saved_result_part.submitted_numerical_value)
+                if part.saved_result_part
+                else None
+            )
+            if part.saved_result_part:
+                part.points_display = (
+                    f"Punkte: {_format_decimal_compact(part.saved_result_part.score)}"
+                    f" / {_format_decimal_compact(part.available_points)}"
+                )
+            else:
+                part.points_display = ""
         context["parts"] = parts
         context["has_numerical_parts"] = any(
             part.answer_type == ExerciseVariant.PartAnswerType.NUMERICAL for part in parts

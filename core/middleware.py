@@ -18,6 +18,14 @@ HEADER_STYLE_BLOCK = """
     h1, h2, h3, h4, h5, h6 {
         font-family: "PTSerif", serif;
     }
+    p {
+        font-family: Inter, sans-serif;
+        font-size: 15px;
+    }
+    li {
+        font-family: Inter, sans-serif;
+        font-size: 15px;
+    }
     .chem-e-global-header {
         position: fixed;
         top: 0;
@@ -38,12 +46,20 @@ HEADER_STYLE_BLOCK = """
         padding-left: var(--chem-e-content-margin);
         padding-right: var(--chem-e-content-margin);
     }
+    .chem-e-global-header-links {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+    }
+    .chem-e-global-header-home,
     .chem-e-global-header-logout {
         color: #ffffff;
         font-family: Inter, sans-serif;
         font-size: 13px;
         text-decoration: none;
     }
+    .chem-e-global-header-home:hover,
+    .chem-e-global-header-home:focus,
     .chem-e-global-header-logout:hover,
     .chem-e-global-header-logout:focus {
         text-decoration: underline;
@@ -90,13 +106,6 @@ HEADER_STYLE_BLOCK = """
 </style>
 """
 
-HEADER_BAR = (
-    '<div class="chem-e-global-header">'
-    '<div class="chem-e-global-header-inner">'
-    '<a class="chem-e-global-header-logout" href="/logout/">Logout</a>'
-    "</div>"
-    "</div>"
-)
 PAGE_BANNER = (
     '<div class="chem-e-page-banner" aria-hidden="true">'
     '<div class="chem-e-page-banner-inner">'
@@ -114,6 +123,15 @@ PAGE_BANNER = (
 class GlobalHeaderBarMiddleware(MiddlewareMixin):
     """Inject a global fixed header bar into all HTML responses."""
 
+    def _home_href_for(self, request):
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated:
+            return "/"
+        user_role = getattr(user, "role", None)
+        if user.is_superuser or user_role in {"supervisor", "administrator"}:
+            return "/supervisor"
+        return "/"
+
     def process_response(self, request, response):
         content_type = response.get("Content-Type", "")
         if "text/html" not in content_type or getattr(response, "streaming", False):
@@ -127,10 +145,21 @@ class GlobalHeaderBarMiddleware(MiddlewareMixin):
         if "chem-e-global-header" in html:
             return response
 
+        header_bar = (
+            '<div class="chem-e-global-header">'
+            '<div class="chem-e-global-header-inner">'
+            '<nav class="chem-e-global-header-links">'
+            f'<a class="chem-e-global-header-home" href="{self._home_href_for(request)}">Home</a>'
+            '<a class="chem-e-global-header-logout" href="/logout/">Logout</a>'
+            "</nav>"
+            "</div>"
+            "</div>"
+        )
+
         if "</head>" in html:
             html = html.replace("</head>", f"{HEADER_STYLE_BLOCK}</head>", 1)
         if "<body>" in html:
-            html = html.replace("<body>", f"<body>{HEADER_BAR}{PAGE_BANNER}", 1)
+            html = html.replace("<body>", f"<body>{header_bar}{PAGE_BANNER}", 1)
         else:
             body_start = html.find("<body")
             if body_start != -1:
@@ -138,7 +167,7 @@ class GlobalHeaderBarMiddleware(MiddlewareMixin):
                 if body_end != -1:
                     html = (
                         html[: body_end + 1]
-                        + HEADER_BAR
+                        + header_bar
                         + PAGE_BANNER
                         + html[body_end + 1 :]
                     )

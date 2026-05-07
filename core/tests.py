@@ -1012,7 +1012,7 @@ class ExerciseVariantAssignmentTests(TestCase):
         self.client.force_login(self.student)
         response = self.client.get(reverse("tutorial_detail", args=[self.tutorial.id]))
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Not completed (0.00 / 2.00)")
+        self.assertContains(response, "Not completed (0 / 2)")
 
     def test_tutorial_page_shows_completed_status_and_score_after_submission(self):
         self.client.force_login(self.student)
@@ -1035,7 +1035,7 @@ class ExerciseVariantAssignmentTests(TestCase):
         )
         response = self.client.get(reverse("tutorial_detail", args=[self.tutorial.id]))
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Completed (1.00 / 2.00)")
+        self.assertContains(response, "Completed (1 / 2)")
 
     def test_tutorial_page_shows_pending_grading_for_ungraded_upload_submission(self):
         upload_exercise = Exercise.objects.create(
@@ -1075,7 +1075,34 @@ class ExerciseVariantAssignmentTests(TestCase):
         self.client.force_login(self.student)
         response = self.client.get(reverse("tutorial_detail", args=[self.tutorial.id]))
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Pending grading (0.00 / 3.00)")
+        self.assertContains(response, "Pending grading (0 / 3)")
+
+    def test_tutorial_page_shows_zero_points_as_zero_not_blank(self):
+        zero_points_exercise = Exercise.objects.create(
+            tutorial=self.tutorial,
+            title="Zero Points Exercise",
+            order_index=3,
+            exercise_type=Exercise.ExerciseType.NUMERICAL,
+            is_active=True,
+        )
+        zero_variant = ExerciseVariant.objects.create(
+            exercise=zero_points_exercise,
+            exercise_text="Zero points variant",
+        )
+        ExercisePart.objects.create(
+            variant=zero_variant,
+            label="a",
+            prompt_text="Zero points part",
+            answer_type=ExerciseVariant.PartAnswerType.NUMERICAL,
+            reference_solution="1.0000",
+            absolute_tolerance="0.1000",
+            available_points="0.00",
+            order_index=1,
+        )
+        self.client.force_login(self.student)
+        response = self.client.get(reverse("tutorial_detail", args=[self.tutorial.id]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Not completed (0 / 0)")
 
 
 class NumericalAnswerFormViewTests(TestCase):
@@ -1120,7 +1147,7 @@ class NumericalAnswerFormViewTests(TestCase):
     def test_numerical_exercise_shows_form_and_accepts_numeric_input(self):
         self.client.force_login(self.student)
         response = self.client.get(reverse("exercise_detail", args=[self.numerical_exercise.id]))
-        self.assertContains(response, "Submit numerical answer")
+        self.assertContains(response, "Lösung (Präzision +/- 0.1)")
         self.assertIn("numerical_form", response.context)
 
         post_response = self.client.post(
@@ -1128,8 +1155,17 @@ class NumericalAnswerFormViewTests(TestCase):
             {"submitted_value": "12.34"},
         )
         self.assertEqual(post_response.status_code, 200)
-        self.assertContains(post_response, "Your latest result")
-        self.assertContains(post_response, "Part a submitted value: 12.3400")
+        self.assertContains(post_response, 'value="12.34"')
+        self.assertContains(post_response, "Punkte: 0 / 2")
+
+    def test_numerical_exercise_with_zero_tolerance_shows_plain_loesung_label(self):
+        ExercisePart.objects.filter(variant__exercise=self.numerical_exercise).update(
+            absolute_tolerance="0.0000"
+        )
+        self.client.force_login(self.student)
+        response = self.client.get(reverse("exercise_detail", args=[self.numerical_exercise.id]))
+        self.assertContains(response, "Lösung")
+        self.assertNotContains(response, "Präzision +/- 0")
 
     def test_numerical_exercise_rejects_non_numeric_input(self):
         self.client.force_login(self.student)
@@ -1224,10 +1260,8 @@ class NumericalAnswerFormViewTests(TestCase):
             reverse("exercise_detail", args=[self.numerical_exercise.id])
         )
         self.assertEqual(revisit_response.status_code, 200)
-        self.assertContains(revisit_response, "Your latest result")
-        self.assertContains(revisit_response, "Part a submitted value: 10.0000")
-        self.assertContains(revisit_response, "Part a correct: True")
-        self.assertContains(revisit_response, "Score: 2.00")
+        self.assertContains(revisit_response, 'value="10"')
+        self.assertContains(revisit_response, "Punkte: 2 / 2")
 
     def test_upload_submission_saves_file_to_existing_result(self):
         self.client.force_login(self.student)
@@ -1236,7 +1270,7 @@ class NumericalAnswerFormViewTests(TestCase):
             {"uploaded_file": SimpleUploadedFile("solution.pdf", b"upload content")},
         )
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Your latest upload")
+        self.assertContains(response, "Punkte: 0 / 2")
 
         result = Result.objects.get(
             student=self.student,
