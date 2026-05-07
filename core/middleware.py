@@ -28,6 +28,26 @@ HEADER_STYLE_BLOCK = """
         background: var(--chem-e-header-bg);
         z-index: 9999;
     }
+    .chem-e-global-header-inner {
+        height: 100%;
+        width: 100%;
+        box-sizing: border-box;
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        padding-left: var(--chem-e-content-margin);
+        padding-right: var(--chem-e-content-margin);
+    }
+    .chem-e-global-header-logout {
+        color: #ffffff;
+        font-family: Inter, sans-serif;
+        font-size: 13px;
+        text-decoration: none;
+    }
+    .chem-e-global-header-logout:hover,
+    .chem-e-global-header-logout:focus {
+        text-decoration: underline;
+    }
     .chem-e-page-banner {
         margin-top: var(--chem-e-header-height);
         width: 100vw;
@@ -70,7 +90,13 @@ HEADER_STYLE_BLOCK = """
 </style>
 """
 
-HEADER_BAR = '<div class="chem-e-global-header" aria-hidden="true"></div>'
+HEADER_BAR = (
+    '<div class="chem-e-global-header">'
+    '<div class="chem-e-global-header-inner">'
+    '<a class="chem-e-global-header-logout" href="/logout/">Logout</a>'
+    "</div>"
+    "</div>"
+)
 PAGE_BANNER = (
     '<div class="chem-e-page-banner" aria-hidden="true">'
     '<div class="chem-e-page-banner-inner">'

@@ -6,6 +6,7 @@ from .views import (
     CourseListView,
     ExerciseDetailView,
     LegacySupervisorWorkflowRedirectView,
+    LogoutView,
     RegisterView,
     RoleAwareLoginView,
     SupervisorArchivedSubmissionFileDownloadView,
@@ -183,7 +184,7 @@ urlpatterns = [
     ),
     path("register/", RegisterView.as_view(), name="register"),
     path("login/", RoleAwareLoginView.as_view(), name="login"),
-    path("logout/", auth_views.LogoutView.as_view(next_page="/login/"), name="logout"),
+    path("logout/", LogoutView.as_view(), name="logout"),
     path(
         "password-reset/",
         auth_views.PasswordResetView.as_view(),

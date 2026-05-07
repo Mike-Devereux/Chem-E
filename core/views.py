@@ -3,6 +3,7 @@ import os
 from decimal import Decimal
 
 from django.contrib.auth import views as auth_views
+from django.contrib.auth import logout as auth_logout
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.exceptions import PermissionDenied
 from django.core.files.storage import default_storage
@@ -173,6 +174,16 @@ class RoleAwareLoginView(auth_views.LoginView):
         if user.role in {User.Role.SUPERVISOR, User.Role.ADMINISTRATOR} or user.is_superuser:
             return reverse_lazy("supervisor_landing")
         return super().get_success_url()
+
+
+class LogoutView(View):
+    def get(self, request):
+        auth_logout(request)
+        return redirect("login")
+
+    def post(self, request):
+        auth_logout(request)
+        return redirect("login")
 
 
 class SupervisorLandingView(SupervisorRequiredMixin, View):
