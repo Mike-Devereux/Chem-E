@@ -7,7 +7,7 @@ from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.exceptions import PermissionDenied
 from django.core.files.storage import default_storage
 from django.db import IntegrityError, transaction
-from django.db.models import Count, Q
+from django.db.models import Count, Q, Sum
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -593,9 +593,65 @@ class TutorialDetailView(LoginRequiredMixin, DetailView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context["exercises"] = self.object.exercises.filter(is_active=True).order_by(
-            "order_index", "id"
+        exercises = list(
+            self.object.exercises.filter(is_active=True).order_by("order_index", "id")
         )
+        context["exercises"] = exercises
+
+        if self.request.user.role != User.Role.STUDENT:
+            return context
+
+        exercise_ids = [exercise.id for exercise in exercises]
+        totals_by_exercise_id = {
+            row["variant__exercise_id"]: row["total_points"] or Decimal("0.00")
+            for row in ExercisePart.objects.filter(variant__exercise_id__in=exercise_ids)
+            .values("variant__exercise_id")
+            .annotate(total_points=Sum("available_points"))
+        }
+        results_by_exercise_id = {
+            result.exercise_id: result
+            for result in Result.objects.filter(
+                student=self.request.user,
+                exercise_id__in=exercise_ids,
+                is_archived=False,
+            ).prefetch_related("parts")
+        }
+
+        exercise_rows = []
+        for exercise in exercises:
+            total_points = totals_by_exercise_id.get(exercise.id, Decimal("0.00"))
+            result = results_by_exercise_id.get(exercise.id)
+            has_submission = bool(
+                result
+                and any(
+                    part.submitted_numerical_value is not None or bool(part.uploaded_file)
+                    for part in result.parts.all()
+                )
+            )
+            has_pending_upload_grading = bool(
+                result
+                and any(
+                    part.exercise_part.answer_type == ExerciseVariant.PartAnswerType.DOCUMENT_UPLOAD
+                    and bool(part.uploaded_file)
+                    and not part.is_manually_graded
+                    for part in result.parts.all()
+                )
+            )
+            status = "not_completed"
+            if has_pending_upload_grading:
+                status = "pending_grading"
+            elif has_submission:
+                status = "completed"
+            score = result.score if has_submission and result else Decimal("0.00")
+            exercise_rows.append(
+                {
+                    "exercise": exercise,
+                    "status": status,
+                    "score_display": f"{score:.2f}",
+                    "total_display": f"{total_points:.2f}",
+                }
+            )
+        context["exercise_rows"] = exercise_rows
         return context
 
 

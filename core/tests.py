@@ -1008,6 +1008,62 @@ class ExerciseVariantAssignmentTests(TestCase):
             reverse("student_assigned_exercise_detail", args=[self.exercise.id]),
         )
 
+    def test_tutorial_page_shows_not_completed_status_and_score_before_submission(self):
+        self.client.force_login(self.student)
+        response = self.client.get(reverse("tutorial_detail", args=[self.tutorial.id]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Not completed (0.00 / 2.00)")
+
+    def test_tutorial_page_shows_completed_status_and_score_after_submission(self):
+        self.client.force_login(self.student)
+        self.client.post(
+            reverse("exercise_detail", args=[self.exercise.id]),
+            {"submitted_value": "1.0000"},
+        )
+        response = self.client.get(reverse("tutorial_detail", args=[self.tutorial.id]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Completed (1.00 / 2.00)")
+
+    def test_tutorial_page_shows_pending_grading_for_ungraded_upload_submission(self):
+        upload_exercise = Exercise.objects.create(
+            tutorial=self.tutorial,
+            title="Upload Pending Exercise",
+            order_index=2,
+            exercise_type=Exercise.ExerciseType.DOCUMENT_UPLOAD,
+            is_active=True,
+        )
+        upload_variant = ExerciseVariant.objects.create(
+            exercise=upload_exercise,
+            exercise_text="Upload a file",
+        )
+        upload_part = ExercisePart.objects.create(
+            variant=upload_variant,
+            label="a",
+            prompt_text="Upload answer",
+            answer_type=ExerciseVariant.PartAnswerType.DOCUMENT_UPLOAD,
+            available_points="3.00",
+            order_index=1,
+        )
+        upload_result = Result.objects.create(
+            student=self.student,
+            course=self.course,
+            tutorial=self.tutorial,
+            exercise=upload_exercise,
+            assigned_variant=upload_variant,
+        )
+        ResultPart.objects.create(
+            result=upload_result,
+            exercise_part=upload_part,
+            uploaded_file="student_submissions/pending_upload.pdf",
+            score="0.00",
+            is_manually_graded=False,
+        )
+
+        self.client.force_login(self.student)
+        response = self.client.get(reverse("tutorial_detail", args=[self.tutorial.id]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Pending grading (0.00 / 3.00)")
+
 
 class NumericalAnswerFormViewTests(TestCase):
     def setUp(self):

@@ -15,11 +15,26 @@
     <h2>Exercises</h2>
     {% if exercises %}
         <ul>
-            {% for exercise in exercises %}
-                <li>
-                    <a href="{% url 'student_assigned_exercise_detail' exercise.pk %}">{{ exercise.title }}</a>
-                </li>
-            {% endfor %}
+            {% if request.user.role == "student" %}
+                {% for row in exercise_rows %}
+                    <li>
+                        <a href="{% url 'student_assigned_exercise_detail' row.exercise.pk %}">{{ row.exercise.title }}</a>
+                        {% if row.status == "completed" %}
+                            - Completed ({{ row.score_display }} / {{ row.total_display }})
+                        {% elif row.status == "pending_grading" %}
+                            - Pending grading ({{ row.score_display }} / {{ row.total_display }})
+                        {% else %}
+                            - Not completed ({{ row.score_display }} / {{ row.total_display }})
+                        {% endif %}
+                    </li>
+                {% endfor %}
+            {% else %}
+                {% for exercise in exercises %}
+                    <li>
+                        <a href="{% url 'student_assigned_exercise_detail' exercise.pk %}">{{ exercise.title }}</a>
+                    </li>
+                {% endfor %}
+            {% endif %}
         </ul>
     {% else %}
         <p>No exercises available for this tutorial.</p>
