@@ -12,6 +12,11 @@ HEADER_STYLE_BLOCK = """
     }
     body {
         margin: 0;
+        max-width: none !important;
+        width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+        font-family: "PTSerif", serif;
     }
     .chem-e-global-header {
         position: fixed;
@@ -25,7 +30,7 @@ HEADER_STYLE_BLOCK = """
     }
     .chem-e-page-banner {
         margin-top: var(--chem-e-header-height);
-        width: 100%;
+        width: 100vw;
         height: var(--chem-e-banner-height);
         background: var(--chem-e-banner-bg);
         box-sizing: border-box;
@@ -34,14 +39,28 @@ HEADER_STYLE_BLOCK = """
         height: 100%;
         width: 100%;
         display: flex;
-        justify-content: flex-end;
+        justify-content: space-between;
         align-items: center;
         box-sizing: border-box;
+        padding-left: var(--chem-e-content-margin);
         padding-right: var(--chem-e-content-margin);
+    }
+    .chem-e-page-banner-left {
+        display: flex;
+        align-items: center;
+    }
+    .chem-e-page-banner-right {
+        display: flex;
+        align-items: center;
+    }
+    .chem-e-page-banner-left-logo {
+        display: block;
+        height: 73px;
+        width: auto;
     }
     .chem-e-page-banner-logo {
         display: block;
-        max-height: 120px;
+        height: 73px;
         width: auto;
     }
     body > :not(.chem-e-global-header):not(.chem-e-page-banner) {
@@ -55,7 +74,12 @@ HEADER_BAR = '<div class="chem-e-global-header" aria-hidden="true"></div>'
 PAGE_BANNER = (
     '<div class="chem-e-page-banner" aria-hidden="true">'
     '<div class="chem-e-page-banner-inner">'
+    '<div class="chem-e-page-banner-left">'
+    '<img class="chem-e-page-banner-left-logo" src="/media/ui/uni-basel-logo.svg" alt="">'
+    "</div>"
+    '<div class="chem-e-page-banner-right">'
     '<img class="chem-e-page-banner-logo" src="/media/ui/DepChe_Logo_DE_Schwarz_RGB.png" alt="">'
+    "</div>"
     "</div>"
     "</div>"
 )
