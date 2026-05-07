@@ -4,12 +4,26 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Submission Detail</title>
+    <style>
+        .status-graded { color: #0b6b2f; }
+        .status-ungraded { color: #9c6b00; }
+    </style>
 </head>
 <body>
     <h1>Submission Detail</h1>
     <p><strong>Student:</strong> {{ submission.student.email }}</p>
     <p><strong>Exercise:</strong> {{ submission.exercise.title }}</p>
     <p><strong>Assigned variant:</strong> {{ submission.assigned_variant.exercise_text }}</p>
+    {% if upload_result_part %}
+        <p>
+            <strong>Status:</strong>
+            {% if upload_result_part.is_manually_graded %}
+                <span class="status-graded">Graded</span>
+            {% else %}
+                <span class="status-ungraded">Ungraded</span>
+            {% endif %}
+        </p>
+    {% endif %}
     <hr>
     <table border="1" cellpadding="4" cellspacing="0">
         <thead>
@@ -23,16 +37,16 @@
             </tr>
         </thead>
         <tbody>
-            {% if upload_result_part %}
-                <tr>
-                    <th>Status</th>
-                    <td colspan="5">{{ upload_result_part.is_manually_graded|yesno:"Graded,Ungraded" }}</td>
-                </tr>
-            {% endif %}
             {% for row in detail_rows %}
                 <tr>
                     <th>Teil {{ row.part_label }}</th>
-                    <td>{{ row.submitted_value }}</td>
+                    <td>
+                        {% if row.submitted_file_url %}
+                            <a href="{{ row.submitted_file_url }}">{{ row.submitted_value }}</a>
+                        {% else %}
+                            {{ row.submitted_value }}
+                        {% endif %}
+                    </td>
                     <td>{{ row.reference_solution }}</td>
                     <td>{{ row.tolerance }}</td>
                     <td>{{ row.awarded_points }}</td>

@@ -1999,6 +1999,75 @@ class SupervisorGradingWorkflowTests(TestCase):
         self.assertEqual(upload_result_part.graded_by, self.supervisor)
         self.assertIsNotNone(upload_result_part.graded_at)
 
+    def test_manual_grading_form_rejects_score_above_available_points(self):
+        upload_exercise = Exercise.objects.create(
+            tutorial=self.tutorial,
+            title="Upload Max Score Exercise",
+            order_index=5,
+            exercise_type=Exercise.ExerciseType.DOCUMENT_UPLOAD,
+        )
+        upload_variant = ExerciseVariant.objects.create(
+            exercise=upload_exercise,
+            exercise_text="Upload max score report.",
+            available_points="6.00",
+        )
+        upload_result = Result.objects.create(
+            student=self.student,
+            course=self.course,
+            tutorial=self.tutorial,
+            exercise=upload_exercise,
+            assigned_variant=upload_variant,
+            uploaded_file=SimpleUploadedFile("max.pdf", b"content"),
+            score="0.00",
+            is_manually_graded=False,
+        )
+
+        self.client.force_login(self.supervisor)
+        response = self.client.post(
+            reverse("supervisor_submission_detail", args=[upload_result.id]),
+            {"score": "6.01", "feedback": "Too high score"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            "Score cannot be greater than available points for this exercise part.",
+        )
+        upload_result.refresh_from_db()
+        self.assertEqual(str(upload_result.score), "0.00")
+
+    def test_manual_grading_form_rejects_negative_score(self):
+        upload_exercise = Exercise.objects.create(
+            tutorial=self.tutorial,
+            title="Upload Negative Score Exercise",
+            order_index=6,
+            exercise_type=Exercise.ExerciseType.DOCUMENT_UPLOAD,
+        )
+        upload_variant = ExerciseVariant.objects.create(
+            exercise=upload_exercise,
+            exercise_text="Upload negative score report.",
+            available_points="5.00",
+        )
+        upload_result = Result.objects.create(
+            student=self.student,
+            course=self.course,
+            tutorial=self.tutorial,
+            exercise=upload_exercise,
+            assigned_variant=upload_variant,
+            uploaded_file=SimpleUploadedFile("negative.pdf", b"content"),
+            score="0.00",
+            is_manually_graded=False,
+        )
+
+        self.client.force_login(self.supervisor)
+        response = self.client.post(
+            reverse("supervisor_submission_detail", args=[upload_result.id]),
+            {"score": "-0.01", "feedback": "Negative score"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Ensure this value is greater than or equal to 0.")
+        upload_result.refresh_from_db()
+        self.assertEqual(str(upload_result.score), "0.00")
+
     def test_submissions_list_shows_ungraded_and_graded_status(self):
         upload_exercise = Exercise.objects.create(
             tutorial=self.tutorial,
@@ -2382,8 +2451,14 @@ class SupervisorCourseSummaryViewTests(TestCase):
         rows_by_student_id_t1 = {
             row["student"].id: row["cells"] for row in tutorial_1_table["rows"]
         }
+        totals_by_student_id_t1 = {
+            row["student"].id: row["row_total"] for row in tutorial_1_table["rows"]
+        }
         rows_by_student_id_t2 = {
             row["student"].id: row["cells"] for row in tutorial_2_table["rows"]
+        }
+        totals_by_student_id_t2 = {
+            row["student"].id: row["row_total"] for row in tutorial_2_table["rows"]
         }
 
         self.assertEqual(str(rows_by_student_id_t1[self.student_a.id][0].score), "5.00")
@@ -2393,11 +2468,16 @@ class SupervisorCourseSummaryViewTests(TestCase):
         self.assertEqual(str(rows_by_student_id_t1[self.student_b.id][0].score), "4.00")
         self.assertIsNone(rows_by_student_id_t1[self.student_b.id][1])
         self.assertIsNone(rows_by_student_id_t2[self.student_b.id][0])
+        self.assertEqual(str(totals_by_student_id_t1[self.student_a.id]), "5.00")
+        self.assertEqual(str(totals_by_student_id_t2[self.student_a.id]), "7.00")
+        self.assertEqual(str(totals_by_student_id_t1[self.student_b.id]), "4.00")
+        self.assertEqual(str(totals_by_student_id_t2[self.student_b.id]), "0")
 
         self.assertContains(response, "5.00")
         self.assertContains(response, "4.00")
         self.assertContains(response, "7.00")
         self.assertContains(response, "Ungraded")
+        self.assertContains(response, ">Total</th>", html=False)
 
     def test_filtering_by_tutorial_limits_exercises_and_results(self):
         self.client.force_login(self.owner_supervisor)

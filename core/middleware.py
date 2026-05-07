@@ -6,6 +6,8 @@ HEADER_STYLE_BLOCK = """
     :root {
         --chem-e-header-height: 45px;
         --chem-e-header-bg: #2d373c;
+        --chem-e-footer-height: 45px;
+        --chem-e-footer-bg: #2d373c;
         --chem-e-banner-height: 146px;
         --chem-e-content-margin: 100px;
         --chem-e-banner-bg: #a5d7d2;
@@ -14,6 +16,9 @@ HEADER_STYLE_BLOCK = """
         margin: 0;
         max-width: none !important;
         width: 100%;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
     }
     h1, h2, h3, h4, h5, h6 {
         font-family: "PTSerif", serif;
@@ -99,7 +104,24 @@ HEADER_STYLE_BLOCK = """
         height: 73px;
         width: auto;
     }
-    body > :not(.chem-e-global-header):not(.chem-e-page-banner) {
+    .chem-e-global-footer {
+        width: 100%;
+        height: var(--chem-e-footer-height);
+        background: var(--chem-e-footer-bg);
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        box-sizing: border-box;
+        padding-left: var(--chem-e-content-margin);
+        padding-right: var(--chem-e-content-margin);
+        margin-top: auto;
+    }
+    .chem-e-global-footer-text {
+        color: #ffffff;
+        font-family: Inter, sans-serif;
+        font-size: 13px;
+    }
+    body > :not(.chem-e-global-header):not(.chem-e-page-banner):not(.chem-e-global-footer) {
         margin-left: var(--chem-e-content-margin);
         margin-right: var(--chem-e-content-margin);
     }
@@ -117,6 +139,12 @@ PAGE_BANNER = (
     "</div>"
     "</div>"
     "</div>"
+)
+
+FOOTER_BAR = (
+    '<footer class="chem-e-global-footer">'
+    '<span class="chem-e-global-footer-text">Chem-E: michael.devereux@unibas.ch</span>'
+    "</footer>"
 )
 
 
@@ -171,6 +199,8 @@ class GlobalHeaderBarMiddleware(MiddlewareMixin):
                         + PAGE_BANNER
                         + html[body_end + 1 :]
                     )
+        if "</body>" in html:
+            html = html.replace("</body>", f"{FOOTER_BAR}</body>", 1)
 
         response.content = html.encode(response.charset or "utf-8")
         if "Content-Length" in response:

@@ -994,6 +994,11 @@ class SupervisorSubmissionDetailView(SupervisorRequiredMixin, DetailView):
                 {
                     "part_label": part_result.exercise_part.label,
                     "submitted_value": submitted_value,
+                    "submitted_file_url": (
+                        reverse_lazy("supervisor_submission_file_download", kwargs={"result_id": self.object.id})
+                        if part_result.uploaded_file
+                        else ""
+                    ),
                     "reference_solution": part_result.reference_value_used or "-",
                     "tolerance": part_result.tolerance_used or "-",
                     "awarded_points": part_result.score,
@@ -1015,6 +1020,13 @@ class SupervisorSubmissionDetailView(SupervisorRequiredMixin, DetailView):
             upload_part = _result_upload_part(self.object)
             if upload_part is None:
                 raise Http404("No upload part found for this submission.")
+            requested_score = form.cleaned_data["score"]
+            if requested_score > upload_part.exercise_part.available_points:
+                form.add_error(
+                    "score",
+                    "Score cannot be greater than available points for this exercise part.",
+                )
+                return self.render_to_response(self.get_context_data(grading_form=form))
             upload_part.score = form.cleaned_data["score"]
             upload_part.feedback = form.cleaned_data["feedback"]
             upload_part.is_manually_graded = True
@@ -1152,6 +1164,7 @@ class SupervisorCourseSummaryView(SupervisorRequiredMixin, DetailView):
             rows = []
             for student in students:
                 cells = []
+                row_total = Decimal("0")
                 for part in exercise_parts:
                     result = result_by_student_exercise.get((student.id, part.variant.exercise_id))
                     result_part = (
@@ -1160,7 +1173,13 @@ class SupervisorCourseSummaryView(SupervisorRequiredMixin, DetailView):
                         else None
                     )
                     cells.append(result_part)
-                rows.append({"student": student, "cells": cells})
+                    if result_part and not (
+                        result_part.exercise_part.answer_type
+                        == ExerciseVariant.PartAnswerType.DOCUMENT_UPLOAD
+                        and not result_part.is_manually_graded
+                    ):
+                        row_total += result_part.score
+                rows.append({"student": student, "cells": cells, "row_total": row_total})
             tutorial_tables.append(
                 {
                     "tutorial": tutorial,

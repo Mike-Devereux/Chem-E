@@ -7,6 +7,10 @@
     <style>
         .cell-missing { color: #b00020; }
         .cell-ungraded { color: #9c6b00; }
+        .cell-ungraded a,
+        .cell-ungraded a:visited {
+            color: #9c6b00;
+        }
         .cell-graded { color: #0b6b2f; }
         .cell-graded a,
         .cell-graded a:visited {
@@ -58,6 +62,7 @@
                     {% for group in table.exercise_groups %}
                         <th colspan="{{ group.colspan }}">{{ group.exercise_title }}</th>
                     {% endfor %}
+                    <th rowspan="2">Total</th>
                 </tr>
                 <tr>
                     {% for part in table.columns %}
@@ -88,6 +93,7 @@
                                 <td class="cell-missing">-</td>
                             {% endif %}
                         {% endfor %}
+                        <td>{{ row.row_total }}</td>
                     </tr>
                 {% endfor %}
             </tbody>
