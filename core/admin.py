@@ -179,6 +179,7 @@ class CourseAdmin(SupervisorOwnedContentAdmin):
     search_fields = ("title", "created_by__email")
     ordering = ("title",)
     inlines = (TutorialInline,)
+    autocomplete_fields = ("supervisors",)
 
     def get_supervisor_queryset(self, queryset, user):
         return queryset.filter(Q(created_by=user) | Q(supervisors=user)).distinct()
@@ -209,7 +210,35 @@ class CourseAdmin(SupervisorOwnedContentAdmin):
                 | Q(role=User.Role.ADMINISTRATOR)
                 | Q(is_superuser=True)
             ).distinct()
+            formfield = super().formfield_for_manytomany(db_field, request, **kwargs)
+            formfield.help_text = (
+                "Select existing supervisor or administrator accounts. "
+                "Create new users in User admin."
+            )
+            if hasattr(formfield.widget, "can_add_related"):
+                formfield.widget.can_add_related = False
+            return formfield
         return super().formfield_for_manytomany(db_field, request, **kwargs)
+
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        formfield = super().formfield_for_foreignkey(db_field, request, **kwargs)
+        if db_field.name == "created_by" and hasattr(formfield.widget, "can_add_related"):
+            formfield.widget.can_add_related = False
+            formfield.widget.can_change_related = False
+            formfield.widget.can_delete_related = False
+            formfield.widget.can_view_related = False
+        return formfield
+
+    def formfield_for_dbfield(self, db_field, request, **kwargs):
+        formfield = super().formfield_for_dbfield(db_field, request, **kwargs)
+        if db_field.name == "created_by" and hasattr(formfield.widget, "can_add_related"):
+            formfield.widget.can_add_related = False
+            formfield.widget.can_change_related = False
+            formfield.widget.can_delete_related = False
+            formfield.widget.can_view_related = False
+        if db_field.name == "supervisors" and hasattr(formfield.widget, "can_add_related"):
+            formfield.widget.can_add_related = False
+        return formfield
 
 
 @admin.register(Tutorial)

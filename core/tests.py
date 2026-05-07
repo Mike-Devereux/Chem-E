@@ -885,6 +885,27 @@ class Phase3SupervisorAdminTests(TestCase):
         self.assertIn(self.administrator, supervisors_queryset)
         self.assertNotIn(self.student, supervisors_queryset)
 
+    def test_course_created_by_field_hides_related_user_icons(self):
+        model_admin = admin.site._registry[Course]
+        request = RequestFactory().get("/")
+        request.user = self.administrator
+        form_class = model_admin.get_form(request, obj=self.course_a)
+        form = form_class(instance=self.course_a)
+        created_by_widget = form.fields["created_by"].widget
+        self.assertFalse(created_by_widget.can_add_related)
+        self.assertFalse(created_by_widget.can_change_related)
+        self.assertFalse(created_by_widget.can_delete_related)
+        self.assertFalse(created_by_widget.can_view_related)
+
+    def test_course_supervisors_field_hides_add_related_user_icon(self):
+        model_admin = admin.site._registry[Course]
+        request = RequestFactory().get("/")
+        request.user = self.administrator
+        form_class = model_admin.get_form(request, obj=self.course_a)
+        form = form_class(instance=self.course_a)
+        supervisors_widget = form.fields["supervisors"].widget
+        self.assertFalse(supervisors_widget.can_add_related)
+
 
 class ExerciseVariantAssignmentTests(TestCase):
     def setUp(self):
@@ -2785,12 +2806,18 @@ class SupervisorLandingAndSummaryListViewTests(TestCase):
         self.assertEqual(landing_response.status_code, 403)
         self.assertEqual(summary_list_response.status_code, 403)
 
-    def test_supervisor_landing_contains_required_navigation_links(self):
+    def test_supervisor_landing_hides_admin_area_for_non_admin_supervisor(self):
         self.client.force_login(self.supervisor_owner)
         response = self.client.get(reverse("supervisor_landing"))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, reverse("home"))
         self.assertContains(response, reverse("supervisor_course_summary_list"))
+        self.assertNotContains(response, "/admin/")
+
+    def test_supervisor_landing_shows_admin_area_for_administrator(self):
+        self.client.force_login(self.administrator)
+        response = self.client.get(reverse("supervisor_landing"))
+        self.assertEqual(response.status_code, 200)
         self.assertContains(response, "/admin/")
 
     def test_supervisor_pages_show_only_accessible_courses_for_supervisor(self):
