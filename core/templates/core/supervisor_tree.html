@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Supervisor Tree Editor</title>
+</head>
+<body>
+    <p><a href="{% url 'supervisor_landing' %}">Back to supervisor landing</a></p>
+    <h1>Supervisor tree editor</h1>
+    <p>Primary workflow: single-page tree editor with inline create, edit, and delete.</p>
+    <p><a href="{% url 'supervisor_course_manage_list' %}">Open legacy multi-page editor (fallback)</a></p>
+    <p>
+        <label for="tree-filter-input">Filter tree:</label>
+        <input id="tree-filter-input" type="text" placeholder="Type to filter titles">
+        <button type="button" id="tree-expand-all">Expand all</button>
+        <button type="button" id="tree-collapse-all">Collapse all</button>
+    </p>
+    <div id="tree-status">Loading tree...</div>
+    <h2>Edit/Create node</h2>
+    <form id="tree-editor-form">
+        <p id="tree-editor-empty">Select a node using its Edit button.</p>
+        <div id="tree-editor-fields"></div>
+        <p><button type="submit" id="tree-editor-save" disabled>Save changes</button></p>
+        <pre id="tree-editor-errors"></pre>
+    </form>
+    <div id="tree-root"></div>
+    <script>
+        let selectedNode = null;
+        let editorMode = "edit";
+        const expandedNodeStorageKey = "supervisorTreeExpandedNodesV1";
+        let expandedNodeKeys = new Set();
+        let requestInFlight = false;
+
+        function getCsrfToken() {
+            const cookieValue = document.cookie
+                .split("; ")
+                .find((row) => row.startsWith("csrftoken="));
+            return cookieValue ? decodeURIComponent(cookieValue.split("=")[1]) : "";
+        }
+
+        function addEditButton(container, nodeType, nodeData) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.textContent = "Edit";
+            button.addEventListener("click", (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                selectedNode = {nodeType: nodeType, nodeData: nodeData};
+                editorMode = "edit";
+                renderEditor();
+            });
+            container.appendChild(document.createTextNode(" "));
+            container.appendChild(button);
+        }
+
+        function addCreateButton(container, childType, parentType, parentId) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.textContent = `Add ${childType}`;
+            button.addEventListener("click", (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                selectedNode = {
+                    nodeType: childType,
+                    nodeData: {id: null},
+                    parentType: parentType,
+                    parentId: parentId,
+                };
+                editorMode = "create";
+                renderEditor();
+            });
+            container.appendChild(document.createTextNode(" "));
+            container.appendChild(button);
+        }
+
+        function addDeleteButton(container, nodeType, nodeId) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.textContent = "Delete";
+            button.addEventListener("click", async (event) => {
+                if (requestInFlight) {
+                    return;
+                }
+                event.preventDefault();
+                event.stopPropagation();
+                const confirmDelete = window.confirm(
+                    `Delete ${nodeType} #${nodeId}? This also deletes nested items.`
+                );
+                if (!confirmDelete) {
+                    return;
+                }
+                const errorsRoot = document.getElementById("tree-editor-errors");
+                try {
+                    requestInFlight = true;
+                    const response = await fetch(
+                        `/supervisor/tree/${nodeType}/${nodeId}/delete/`,
+                        {
+                            method: "POST",
+                            headers: {
+                                "Content-Type": "application/x-www-form-urlencoded",
+                                "X-CSRFToken": getCsrfToken(),
+                                "Accept": "application/json",
+                            },
+                            body: "confirm=yes",
+                        }
+                    );
+                    const result = await readJsonOrEmpty(response);
+                    if (!response.ok || !result.ok) {
+                        errorsRoot.textContent = formatErrors(result.errors || result);
+                        return;
+                    }
+                    errorsRoot.textContent = "Deleted.";
+                    selectedNode = null;
+                    editorMode = "edit";
+                    renderEditor();
+                    await loadTree();
+                } catch (error) {
+                    errorsRoot.textContent = "Delete failed.";
+                } finally {
+                    requestInFlight = false;
+                }
+            });
+            container.appendChild(document.createTextNode(" "));
+            container.appendChild(button);
+        }
+
+        function nodeKey(nodeType, nodeId) {
+            return `${nodeType}:${nodeId}`;
+        }
+
+        function loadExpandedNodes() {
+            try {
+                const raw = window.localStorage.getItem(expandedNodeStorageKey);
+                if (!raw) {
+                    return;
+                }
+                const parsed = JSON.parse(raw);
+                if (Array.isArray(parsed)) {
+                    expandedNodeKeys = new Set(parsed);
+                }
+            } catch (error) {
+                expandedNodeKeys = new Set();
+            }
+        }
+
+        function saveExpandedNodes() {
+            try {
+                window.localStorage.setItem(
+                    expandedNodeStorageKey,
+                    JSON.stringify(Array.from(expandedNodeKeys))
+                );
+            } catch (error) {
+                // Ignore storage failures.
+            }
+        }
+
+        function formatErrors(errors) {
+            if (!errors || typeof errors !== "object") {
+                return "Request failed.";
+            }
+            const lines = [];
+            Object.entries(errors).forEach(([field, messages]) => {
+                if (Array.isArray(messages)) {
+                    messages.forEach((message) => {
+                        lines.push(`${field}: ${message}`);
+                    });
+                } else {
+                    lines.push(`${field}: ${messages}`);
+                }
+            });
+            return lines.join("\n") || "Request failed.";
+        }
+
+        async function readJsonOrEmpty(response) {
+            try {
+                return await response.json();
+            } catch (error) {
+                return {};
+            }
+        }
+
+        function createNode(label, children, nodeType, nodeId) {
+            const details = document.createElement("details");
+            if (nodeType && nodeId !== undefined && nodeId !== null) {
+                const key = nodeKey(nodeType, nodeId);
+                details.dataset.nodeKey = key;
+                details.open = expandedNodeKeys.has(key);
+                details.addEventListener("toggle", () => {
+                    if (details.open) {
+                        expandedNodeKeys.add(key);
+                    } else {
+                        expandedNodeKeys.delete(key);
+                    }
+                    saveExpandedNodes();
+                });
+            } else {
+                details.open = false;
+            }
+            const summary = document.createElement("summary");
+            const labelSpan = document.createElement("span");
+            labelSpan.textContent = label;
+            summary.appendChild(labelSpan);
+            details.appendChild(summary);
+            if (children && children.length > 0) {
+                const list = document.createElement("ul");
+                children.forEach((child) => {
+                    const item = document.createElement("li");
+                    item.appendChild(child);
+                    list.appendChild(item);
+                });
+                details.appendChild(list);
+            }
+            return details;
+        }
+
+        function fieldConfigFor(nodeType, nodeData) {
+            if (nodeType === "course") {
+                return [
+                    {name: "title", label: "Title", type: "text", value: nodeData.title || ""},
+                    {name: "description", label: "Description", type: "textarea", value: nodeData.description || ""},
+                    {name: "is_active", label: "Active", type: "checkbox", value: !!nodeData.is_active},
+                ];
+            }
+            if (nodeType === "tutorial") {
+                return [
+                    {name: "title", label: "Title", type: "text", value: nodeData.title || ""},
+                    {name: "description", label: "Description", type: "textarea", value: nodeData.description || ""},
+                    {name: "order_index", label: "Order index", type: "number", value: nodeData.order_index},
+                    {name: "is_active", label: "Active", type: "checkbox", value: !!nodeData.is_active},
+                ];
+            }
+            if (nodeType === "exercise") {
+                return [
+                    {name: "title", label: "Title", type: "text", value: nodeData.title || ""},
+                    {name: "order_index", label: "Order index", type: "number", value: nodeData.order_index},
+                    {name: "is_active", label: "Active", type: "checkbox", value: !!nodeData.is_active},
+                ];
+            }
+            if (nodeType === "variant") {
+                return [
+                    {name: "exercise_text", label: "Exercise text", type: "textarea", value: nodeData.exercise_text || ""},
+                    {name: "supervisor_notes", label: "Supervisor notes", type: "textarea", value: nodeData.supervisor_notes || ""},
+                ];
+            }
+            if (nodeType === "part") {
+                return [
+                    {name: "label", label: "Label", type: "text", value: nodeData.label || ""},
+                    {name: "prompt_text", label: "Prompt text", type: "textarea", value: nodeData.prompt_text || ""},
+                    {name: "answer_type", label: "Answer type", type: "select", value: nodeData.answer_type || "document_upload"},
+                    {name: "reference_solution", label: "Reference solution", type: "text", value: nodeData.reference_solution || ""},
+                    {name: "absolute_tolerance", label: "Absolute tolerance", type: "text", value: nodeData.absolute_tolerance || ""},
+                    {name: "available_points", label: "Available points", type: "text", value: nodeData.available_points || "1.00"},
+                    {name: "order_index", label: "Order index", type: "number", value: nodeData.order_index},
+                ];
+            }
+            return [];
+        }
+
+        function renderEditor() {
+            const emptyState = document.getElementById("tree-editor-empty");
+            const fieldsRoot = document.getElementById("tree-editor-fields");
+            const saveButton = document.getElementById("tree-editor-save");
+            const errorsRoot = document.getElementById("tree-editor-errors");
+            fieldsRoot.innerHTML = "";
+            errorsRoot.textContent = "";
+            if (!selectedNode) {
+                emptyState.style.display = "block";
+                saveButton.disabled = true;
+                saveButton.textContent = "Save changes";
+                return;
+            }
+            emptyState.style.display = "none";
+            saveButton.disabled = false;
+            saveButton.textContent = editorMode === "create" ? "Create node" : "Save changes";
+            const title = document.createElement("p");
+            if (editorMode === "create") {
+                title.textContent = `Creating ${selectedNode.nodeType} under ${selectedNode.parentType} #${selectedNode.parentId}`;
+            } else {
+                title.textContent = `Editing ${selectedNode.nodeType} #${selectedNode.nodeData.id}`;
+            }
+            fieldsRoot.appendChild(title);
+            const fields = fieldConfigFor(selectedNode.nodeType, selectedNode.nodeData);
+            fields.forEach((field) => {
+                const wrapper = document.createElement("p");
+                const label = document.createElement("label");
+                label.textContent = `${field.label}: `;
+                let input;
+                if (field.type === "textarea") {
+                    input = document.createElement("textarea");
+                    input.rows = 3;
+                    input.value = field.value;
+                } else if (field.type === "select") {
+                    input = document.createElement("select");
+                    input.name = field.name;
+                    const options = [
+                        {value: "numerical", label: "Numerical"},
+                        {value: "document_upload", label: "Document upload"},
+                    ];
+                    options.forEach((optionMeta) => {
+                        const option = document.createElement("option");
+                        option.value = optionMeta.value;
+                        option.textContent = optionMeta.label;
+                        if (optionMeta.value === field.value) {
+                            option.selected = true;
+                        }
+                        input.appendChild(option);
+                    });
+                } else if (field.type === "checkbox") {
+                    input = document.createElement("input");
+                    input.type = "checkbox";
+                    input.checked = field.value;
+                } else {
+                    input = document.createElement("input");
+                    input.type = field.type;
+                    input.value = field.value;
+                }
+                input.name = field.name;
+                label.appendChild(input);
+                wrapper.appendChild(label);
+                fieldsRoot.appendChild(wrapper);
+            });
+        }
+
+        async function submitEditor(event) {
+            event.preventDefault();
+            if (!selectedNode || requestInFlight) {
+                return;
+            }
+            const errorsRoot = document.getElementById("tree-editor-errors");
+            const form = document.getElementById("tree-editor-form");
+            const formData = new FormData(form);
+            const payload = new URLSearchParams();
+            for (const [key, value] of formData.entries()) {
+                payload.append(key, value);
+            }
+            fieldConfigFor(selectedNode.nodeType, selectedNode.nodeData)
+                .filter((field) => field.type === "checkbox")
+                .forEach((field) => {
+                    const checkbox = form.querySelector(`[name="${field.name}"]`);
+                    payload.set(field.name, checkbox && checkbox.checked ? "on" : "");
+                });
+            try {
+                let endpoint = "";
+                if (editorMode === "create") {
+                    payload.set("node_type", selectedNode.nodeType);
+                    payload.set("parent_id", selectedNode.parentId || "");
+                    endpoint = "{% url 'supervisor_tree_node_create' %}";
+                } else {
+                    endpoint = `/supervisor/tree/${selectedNode.nodeType}/${selectedNode.nodeData.id}/update/`;
+                }
+                requestInFlight = true;
+                const response = await fetch(endpoint, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/x-www-form-urlencoded",
+                        "X-CSRFToken": getCsrfToken(),
+                        "Accept": "application/json",
+                    },
+                    body: payload.toString(),
+                });
+                const result = await readJsonOrEmpty(response);
+                if (!response.ok || !result.ok) {
+                    errorsRoot.textContent = formatErrors(result.errors || result);
+                    return;
+                }
+                errorsRoot.textContent = editorMode === "create" ? "Created." : "Saved.";
+                await loadTree();
+            } catch (error) {
+                errorsRoot.textContent = editorMode === "create" ? "Create failed." : "Save failed.";
+            } finally {
+                requestInFlight = false;
+            }
+        }
+
+        function applyTreeFilter() {
+            const filterInput = document.getElementById("tree-filter-input");
+            const query = (filterInput.value || "").trim().toLowerCase();
+            const root = document.getElementById("tree-root");
+            if (query === "") {
+                root.querySelectorAll("details").forEach((details) => {
+                    details.style.display = "";
+                });
+                return;
+            }
+            const evaluateNode = (details) => {
+                const summary = details.querySelector(":scope > summary");
+                const ownText = (summary ? summary.textContent : "").toLowerCase();
+                const ownMatch = ownText.includes(query);
+                const childDetails = Array.from(details.querySelectorAll(":scope > ul > li > details"));
+                let childMatch = false;
+                childDetails.forEach((child) => {
+                    if (evaluateNode(child)) {
+                        childMatch = true;
+                    }
+                });
+                const visible = ownMatch || childMatch;
+                details.style.display = visible ? "" : "none";
+                if (visible && childMatch) {
+                    details.open = true;
+                }
+                return visible;
+            };
+            Array.from(root.querySelectorAll(":scope > ul > li > details")).forEach((topNode) => {
+                evaluateNode(topNode);
+            });
+        }
+
+        function expandOrCollapseAll(shouldExpand) {
+            const root = document.getElementById("tree-root");
+            root.querySelectorAll("details").forEach((details) => {
+                details.open = shouldExpand;
+                if (details.dataset.nodeKey) {
+                    if (shouldExpand) {
+                        expandedNodeKeys.add(details.dataset.nodeKey);
+                    } else {
+                        expandedNodeKeys.delete(details.dataset.nodeKey);
+                    }
+                }
+            });
+            saveExpandedNodes();
+        }
+
+        function renderTree(data) {
+            const root = document.getElementById("tree-root");
+            root.innerHTML = "";
+            if (!data.courses || data.courses.length === 0) {
+                root.textContent = "No courses available.";
+                return;
+            }
+            const topList = document.createElement("ul");
+            data.courses.forEach((course) => {
+                const tutorialNodes = course.tutorials.map((tutorial) => {
+                    const exerciseNodes = tutorial.exercises.map((exercise) => {
+                        const variantNodes = exercise.variants.map((variant) => {
+                            const partNodes = variant.parts.map((part) =>
+                                (() => {
+                                    const node = createNode(
+                                    `Part ${part.label} [${part.answer_type}] (${part.available_points} pts)`,
+                                    [],
+                                    "part",
+                                    part.id
+                                    );
+                                    addEditButton(node.querySelector("summary"), "part", part);
+                                    addDeleteButton(node.querySelector("summary"), "part", part.id);
+                                    return node;
+                                })()
+                            );
+                            const node = createNode(
+                                `Variant ${variant.id}`,
+                                partNodes,
+                                "variant",
+                                variant.id
+                            );
+                            addEditButton(node.querySelector("summary"), "variant", variant);
+                            addCreateButton(node.querySelector("summary"), "part", "variant", variant.id);
+                            addDeleteButton(node.querySelector("summary"), "variant", variant.id);
+                            return node;
+                        });
+                        const node = createNode(
+                            `Exercise ${exercise.order_index}: ${exercise.title}`,
+                            variantNodes,
+                            "exercise",
+                            exercise.id
+                        );
+                        addEditButton(node.querySelector("summary"), "exercise", exercise);
+                        addCreateButton(node.querySelector("summary"), "variant", "exercise", exercise.id);
+                        addDeleteButton(node.querySelector("summary"), "exercise", exercise.id);
+                        return node;
+                    });
+                    const node = createNode(
+                        `Tutorial ${tutorial.order_index}: ${tutorial.title}`,
+                        exerciseNodes,
+                        "tutorial",
+                        tutorial.id
+                    );
+                    addEditButton(node.querySelector("summary"), "tutorial", tutorial);
+                    addCreateButton(node.querySelector("summary"), "exercise", "tutorial", tutorial.id);
+                    addDeleteButton(node.querySelector("summary"), "tutorial", tutorial.id);
+                    return node;
+                });
+                const courseNode = createNode(`Course: ${course.title}`, tutorialNodes, "course", course.id);
+                addEditButton(courseNode.querySelector("summary"), "course", course);
+                addCreateButton(courseNode.querySelector("summary"), "tutorial", "course", course.id);
+                addDeleteButton(courseNode.querySelector("summary"), "course", course.id);
+                const item = document.createElement("li");
+                item.appendChild(courseNode);
+                topList.appendChild(item);
+            });
+            root.appendChild(topList);
+            applyTreeFilter();
+        }
+
+        async function loadTree() {
+            const status = document.getElementById("tree-status");
+            try {
+                const response = await fetch("{% url 'supervisor_tree_data' %}", {
+                    headers: {"Accept": "application/json"},
+                });
+                if (!response.ok) {
+                    status.textContent = "Unable to load tree data.";
+                    return;
+                }
+                const payload = await response.json();
+                status.textContent = "Tree loaded.";
+                renderTree(payload);
+            } catch (error) {
+                status.textContent = "Unable to load tree data.";
+            }
+        }
+
+        document.getElementById("tree-editor-form").addEventListener("submit", submitEditor);
+        document.getElementById("tree-filter-input").addEventListener("input", applyTreeFilter);
+        document.getElementById("tree-expand-all").addEventListener("click", () => expandOrCollapseAll(true));
+        document.getElementById("tree-collapse-all").addEventListener("click", () => expandOrCollapseAll(false));
+        loadExpandedNodes();
+        selectedNode = {nodeType: "course", nodeData: {id: null}, parentType: null, parentId: null};
+        editorMode = "create";
+        renderEditor();
+        loadTree();
+    </script>
+</body>
+</html>

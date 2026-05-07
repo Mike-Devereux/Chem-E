@@ -8,7 +8,7 @@ from django.core.exceptions import PermissionDenied
 from django.core.files.storage import default_storage
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Q, Sum
-from django.http import FileResponse, Http404
+from django.http import FileResponse, Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.urls import reverse_lazy
@@ -95,6 +95,69 @@ def _next_order_index(queryset):
     return (highest or 0) + 1
 
 
+def _serialize_part_node(part):
+    return {
+        "id": part.id,
+        "label": part.label,
+        "prompt_text": part.prompt_text,
+        "answer_type": part.answer_type,
+        "order_index": part.order_index,
+        "available_points": str(part.available_points),
+    }
+
+
+def _serialize_variant_node(variant):
+    return {
+        "id": variant.id,
+        "exercise_text": variant.exercise_text,
+        "supervisor_notes": variant.supervisor_notes,
+        "parts": [
+            _serialize_part_node(part)
+            for part in variant.parts.all().order_by("order_index", "id")
+        ],
+    }
+
+
+def _serialize_exercise_node(exercise):
+    return {
+        "id": exercise.id,
+        "title": exercise.title,
+        "order_index": exercise.order_index,
+        "is_active": exercise.is_active,
+        "variants": [
+            _serialize_variant_node(variant)
+            for variant in exercise.variants.all().order_by("id")
+        ],
+    }
+
+
+def _serialize_tutorial_node(tutorial):
+    return {
+        "id": tutorial.id,
+        "title": tutorial.title,
+        "description": tutorial.description,
+        "order_index": tutorial.order_index,
+        "is_active": tutorial.is_active,
+        "exercises": [
+            _serialize_exercise_node(exercise)
+            for exercise in tutorial.exercises.all().order_by("order_index", "id")
+        ],
+    }
+
+
+def _serialize_course_node(course):
+    return {
+        "id": course.id,
+        "title": course.title,
+        "description": course.description,
+        "is_active": course.is_active,
+        "tutorials": [
+            _serialize_tutorial_node(tutorial)
+            for tutorial in course.tutorials.all().order_by("order_index", "id")
+        ],
+    }
+
+
 class CourseListView(LoginRequiredMixin, ListView):
     model = Course
     template_name = "core/course_list.html"
@@ -122,6 +185,269 @@ class SupervisorLandingView(SupervisorRequiredMixin, View):
             self.template_name,
             {"courses": courses},
         )
+
+
+class SupervisorTreePageView(SupervisorRequiredMixin, View):
+    template_name = "core/supervisor_tree.html"
+
+    def get(self, request):
+        return render(request, self.template_name)
+
+
+class SupervisorTreeDataView(SupervisorRequiredMixin, View):
+    def get(self, request):
+        courses = (
+            _courses_accessible_to_supervisor_or_admin(request.user)
+            .prefetch_related(
+                "tutorials__exercises__variants__parts",
+            )
+            .order_by("title")
+        )
+        course_nodes = [_serialize_course_node(course) for course in courses]
+        return JsonResponse({"courses": course_nodes})
+
+
+class SupervisorTreeNodeUpdateView(SupervisorRequiredMixin, View):
+    def post(self, request, node_type, node_id):
+        if node_type == "course":
+            return self._update_course(request, node_id)
+        if node_type == "tutorial":
+            return self._update_tutorial(request, node_id)
+        if node_type == "exercise":
+            return self._update_exercise(request, node_id)
+        if node_type == "variant":
+            return self._update_variant(request, node_id)
+        if node_type == "part":
+            return self._update_part(request, node_id)
+        return JsonResponse({"ok": False, "errors": {"node": ["Unknown node type."]}}, status=400)
+
+    def _form_error_response(self, form, status=400):
+        return JsonResponse({"ok": False, "errors": form.errors}, status=status)
+
+    def _update_course(self, request, node_id):
+        course = get_object_or_404(Course, pk=node_id)
+        _assert_user_can_manage_course(request.user, course)
+        form = CourseEditForm(request.POST, instance=course)
+        if not form.is_valid():
+            return self._form_error_response(form)
+        form.save()
+        return JsonResponse({"ok": True, "node_type": "course", "updated_node": _serialize_course_node(course)})
+
+    def _update_tutorial(self, request, node_id):
+        tutorial = get_object_or_404(Tutorial, pk=node_id)
+        _assert_user_can_manage_course(request.user, tutorial.course)
+        form = TutorialEditForm(request.POST, instance=tutorial, course=tutorial.course)
+        if not form.is_valid():
+            return self._form_error_response(form)
+        try:
+            with transaction.atomic():
+                form.save()
+        except IntegrityError:
+            form.add_error("order_index", "This order index is already used in this course.")
+            return self._form_error_response(form)
+        return JsonResponse({"ok": True, "node_type": "tutorial", "updated_node": _serialize_tutorial_node(tutorial)})
+
+    def _update_exercise(self, request, node_id):
+        exercise = get_object_or_404(Exercise, pk=node_id)
+        _assert_user_can_manage_course(request.user, exercise.tutorial.course)
+        form = ExerciseEditForm(request.POST, instance=exercise, tutorial=exercise.tutorial)
+        if not form.is_valid():
+            return self._form_error_response(form)
+        try:
+            with transaction.atomic():
+                form.save()
+        except IntegrityError:
+            form.add_error("order_index", "This order index is already used in this tutorial.")
+            return self._form_error_response(form)
+        return JsonResponse({"ok": True, "node_type": "exercise", "updated_node": _serialize_exercise_node(exercise)})
+
+    def _update_variant(self, request, node_id):
+        variant = get_object_or_404(ExerciseVariant, pk=node_id)
+        _assert_user_can_manage_course(request.user, variant.exercise.tutorial.course)
+        form = ExerciseVariantEditForm(request.POST, instance=variant)
+        if not form.is_valid():
+            return self._form_error_response(form)
+        form.save()
+        return JsonResponse({"ok": True, "node_type": "variant", "updated_node": _serialize_variant_node(variant)})
+
+    def _update_part(self, request, node_id):
+        part = get_object_or_404(ExercisePart, pk=node_id)
+        _assert_user_can_manage_course(request.user, part.variant.exercise.tutorial.course)
+        part_data = {
+            "label": request.POST.get("label", part.label),
+            "prompt_text": request.POST.get("prompt_text", part.prompt_text),
+            "answer_type": part.answer_type,
+            "reference_solution": (
+                "" if part.reference_solution is None else str(part.reference_solution)
+            ),
+            "absolute_tolerance": (
+                "" if part.absolute_tolerance is None else str(part.absolute_tolerance)
+            ),
+            "available_points": str(part.available_points),
+            "order_index": request.POST.get("order_index", str(part.order_index)),
+        }
+        form = ExercisePartEditForm(part_data, instance=part, variant=part.variant)
+        if not form.is_valid():
+            return self._form_error_response(form)
+        try:
+            with transaction.atomic():
+                form.save()
+        except IntegrityError:
+            form.add_error("order_index", "This order index is already used in this variant.")
+            return self._form_error_response(form)
+        return JsonResponse({"ok": True, "node_type": "part", "updated_node": _serialize_part_node(part)})
+
+
+class SupervisorTreeNodeCreateView(SupervisorRequiredMixin, View):
+    def post(self, request):
+        node_type = request.POST.get("node_type")
+        parent_id = request.POST.get("parent_id")
+        if node_type == "course":
+            return self._create_course(request)
+        if node_type == "tutorial":
+            return self._create_tutorial(request, parent_id)
+        if node_type == "exercise":
+            return self._create_exercise(request, parent_id)
+        if node_type == "variant":
+            return self._create_variant(request, parent_id)
+        if node_type == "part":
+            return self._create_part(request, parent_id)
+        return JsonResponse({"ok": False, "errors": {"node_type": ["Unknown node type."]}}, status=400)
+
+    def _form_error_response(self, form, status=400):
+        return JsonResponse({"ok": False, "errors": form.errors}, status=status)
+
+    def _create_course(self, request):
+        form = CourseEditForm(request.POST)
+        if not form.is_valid():
+            return self._form_error_response(form)
+        course = form.save(commit=False)
+        course.created_by = request.user
+        course.save()
+        return JsonResponse({"ok": True, "node_type": "course", "created_node": _serialize_course_node(course)})
+
+    def _create_tutorial(self, request, parent_id):
+        course = get_object_or_404(Course, pk=parent_id)
+        _assert_user_can_manage_course(request.user, course)
+        post_data = request.POST.copy()
+        if not post_data.get("order_index"):
+            post_data["order_index"] = str(_next_order_index(course.tutorials.all()))
+        form = TutorialEditForm(post_data, course=course)
+        if not form.is_valid():
+            return self._form_error_response(form)
+        tutorial = form.save(commit=False)
+        tutorial.course = course
+        try:
+            with transaction.atomic():
+                tutorial.save()
+        except IntegrityError:
+            form.add_error("order_index", "This order index is already used in this course.")
+            return self._form_error_response(form)
+        return JsonResponse({"ok": True, "node_type": "tutorial", "created_node": _serialize_tutorial_node(tutorial)})
+
+    def _create_exercise(self, request, parent_id):
+        tutorial = get_object_or_404(Tutorial, pk=parent_id)
+        _assert_user_can_manage_course(request.user, tutorial.course)
+        post_data = request.POST.copy()
+        if not post_data.get("order_index"):
+            post_data["order_index"] = str(_next_order_index(tutorial.exercises.all()))
+        form = ExerciseEditForm(post_data, tutorial=tutorial)
+        if not form.is_valid():
+            return self._form_error_response(form)
+        exercise = form.save(commit=False)
+        exercise.tutorial = tutorial
+        try:
+            with transaction.atomic():
+                exercise.save()
+        except IntegrityError:
+            form.add_error("order_index", "This order index is already used in this tutorial.")
+            return self._form_error_response(form)
+        return JsonResponse({"ok": True, "node_type": "exercise", "created_node": _serialize_exercise_node(exercise)})
+
+    def _create_variant(self, request, parent_id):
+        exercise = get_object_or_404(Exercise, pk=parent_id)
+        _assert_user_can_manage_course(request.user, exercise.tutorial.course)
+        form = ExerciseVariantEditForm(request.POST)
+        if not form.is_valid():
+            return self._form_error_response(form)
+        variant = form.save(commit=False)
+        variant.exercise = exercise
+        variant.save()
+        return JsonResponse({"ok": True, "node_type": "variant", "created_node": _serialize_variant_node(variant)})
+
+    def _create_part(self, request, parent_id):
+        variant = get_object_or_404(ExerciseVariant, pk=parent_id)
+        _assert_user_can_manage_course(request.user, variant.exercise.tutorial.course)
+        post_data = request.POST.copy()
+        if not post_data.get("order_index"):
+            post_data["order_index"] = str(_next_order_index(variant.parts.all()))
+        form = ExercisePartEditForm(post_data, variant=variant)
+        if not form.is_valid():
+            return self._form_error_response(form)
+        part = form.save(commit=False)
+        part.variant = variant
+        try:
+            with transaction.atomic():
+                part.save()
+        except IntegrityError:
+            form.add_error("order_index", "This order index is already used in this variant.")
+            return self._form_error_response(form)
+        return JsonResponse({"ok": True, "node_type": "part", "created_node": _serialize_part_node(part)})
+
+
+class SupervisorTreeNodeDeleteView(SupervisorRequiredMixin, View):
+    def post(self, request, node_type, node_id):
+        if request.POST.get("confirm") != "yes":
+            return JsonResponse(
+                {"ok": False, "errors": {"confirm": ["Deletion requires confirmation."]}},
+                status=400,
+            )
+        if node_type == "course":
+            return self._delete_course(request, node_id)
+        if node_type == "tutorial":
+            return self._delete_tutorial(request, node_id)
+        if node_type == "exercise":
+            return self._delete_exercise(request, node_id)
+        if node_type == "variant":
+            return self._delete_variant(request, node_id)
+        if node_type == "part":
+            return self._delete_part(request, node_id)
+        return JsonResponse({"ok": False, "errors": {"node": ["Unknown node type."]}}, status=400)
+
+    def _delete_course(self, request, node_id):
+        course = get_object_or_404(Course, pk=node_id)
+        _assert_user_can_manage_course(request.user, course)
+        deleted_id = course.id
+        course.delete()
+        return JsonResponse({"ok": True, "node_type": "course", "deleted_id": deleted_id})
+
+    def _delete_tutorial(self, request, node_id):
+        tutorial = get_object_or_404(Tutorial, pk=node_id)
+        _assert_user_can_manage_course(request.user, tutorial.course)
+        deleted_id = tutorial.id
+        tutorial.delete()
+        return JsonResponse({"ok": True, "node_type": "tutorial", "deleted_id": deleted_id})
+
+    def _delete_exercise(self, request, node_id):
+        exercise = get_object_or_404(Exercise, pk=node_id)
+        _assert_user_can_manage_course(request.user, exercise.tutorial.course)
+        deleted_id = exercise.id
+        exercise.delete()
+        return JsonResponse({"ok": True, "node_type": "exercise", "deleted_id": deleted_id})
+
+    def _delete_variant(self, request, node_id):
+        variant = get_object_or_404(ExerciseVariant, pk=node_id)
+        _assert_user_can_manage_course(request.user, variant.exercise.tutorial.course)
+        deleted_id = variant.id
+        variant.delete()
+        return JsonResponse({"ok": True, "node_type": "variant", "deleted_id": deleted_id})
+
+    def _delete_part(self, request, node_id):
+        part = get_object_or_404(ExercisePart, pk=node_id)
+        _assert_user_can_manage_course(request.user, part.variant.exercise.tutorial.course)
+        deleted_id = part.id
+        part.delete()
+        return JsonResponse({"ok": True, "node_type": "part", "deleted_id": deleted_id})
 
 
 class SupervisorCourseSummaryListView(SupervisorRequiredMixin, View):

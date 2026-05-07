@@ -1016,9 +1016,22 @@ class ExerciseVariantAssignmentTests(TestCase):
 
     def test_tutorial_page_shows_completed_status_and_score_after_submission(self):
         self.client.force_login(self.student)
+        self.client.get(reverse("exercise_detail", args=[self.exercise.id]))
+        assigned_result = Result.objects.get(
+            student=self.student,
+            exercise=self.exercise,
+            is_archived=False,
+        )
+        assigned_part = (
+            ExercisePart.objects.filter(variant=assigned_result.assigned_variant)
+            .order_by("order_index", "id")
+            .first()
+        )
+        self.assertIsNotNone(assigned_part)
+        self.assertIsNotNone(assigned_part.reference_solution)
         self.client.post(
             reverse("exercise_detail", args=[self.exercise.id]),
-            {"submitted_value": "1.0000"},
+            {"submitted_value": str(assigned_part.reference_solution)},
         )
         response = self.client.get(reverse("tutorial_detail", args=[self.tutorial.id]))
         self.assertEqual(response.status_code, 200)
@@ -2854,6 +2867,30 @@ class SupervisorLandingAndSummaryListViewTests(TestCase):
             created_by=self.administrator,
         )
         self.course_a.supervisors.add(self.shared_supervisor)
+        self.tutorial_a = Tutorial.objects.create(
+            course=self.course_a,
+            title="Landing Tutorial A",
+            order_index=1,
+        )
+        self.exercise_a = Exercise.objects.create(
+            tutorial=self.tutorial_a,
+            title="Landing Exercise A",
+            order_index=1,
+            exercise_type=Exercise.ExerciseType.NUMERICAL,
+            is_active=True,
+        )
+        self.variant_a = ExerciseVariant.objects.create(
+            exercise=self.exercise_a,
+            exercise_text="Landing Variant A",
+        )
+        self.part_a = ExercisePart.objects.create(
+            variant=self.variant_a,
+            label="a",
+            prompt_text="Landing part prompt",
+            answer_type=ExerciseVariant.PartAnswerType.NUMERICAL,
+            available_points="1.00",
+            order_index=1,
+        )
 
     def test_student_cannot_access_supervisor_landing_or_summary_list(self):
         self.client.force_login(self.student)
@@ -2867,6 +2904,7 @@ class SupervisorLandingAndSummaryListViewTests(TestCase):
         response = self.client.get(reverse("supervisor_landing"))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, reverse("home"))
+        self.assertContains(response, reverse("supervisor_tree"))
         self.assertContains(response, reverse("supervisor_course_summary_list"))
         self.assertNotContains(response, "/admin/")
 
@@ -2874,7 +2912,251 @@ class SupervisorLandingAndSummaryListViewTests(TestCase):
         self.client.force_login(self.administrator)
         response = self.client.get(reverse("supervisor_landing"))
         self.assertEqual(response.status_code, 200)
+        self.assertContains(response, reverse("supervisor_tree"))
         self.assertContains(response, "/admin/")
+
+    def test_student_cannot_access_supervisor_tree_page(self):
+        self.client.force_login(self.student)
+        response = self.client.get(reverse("supervisor_tree"))
+        self.assertEqual(response.status_code, 403)
+
+    def test_supervisor_can_access_supervisor_tree_page(self):
+        self.client.force_login(self.supervisor_owner)
+        response = self.client.get(reverse("supervisor_tree"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Primary workflow: single-page tree editor with inline create, edit, and delete.")
+        self.assertContains(response, reverse("supervisor_course_manage_list"))
+        self.assertContains(response, 'id="tree-filter-input"')
+        self.assertContains(response, 'id="tree-expand-all"')
+        self.assertContains(response, 'id="tree-collapse-all"')
+
+    def test_administrator_can_access_supervisor_tree_page(self):
+        self.client.force_login(self.administrator)
+        response = self.client.get(reverse("supervisor_tree"))
+        self.assertEqual(response.status_code, 200)
+
+    def test_student_cannot_access_supervisor_tree_data_endpoint(self):
+        self.client.force_login(self.student)
+        response = self.client.get(reverse("supervisor_tree_data"))
+        self.assertEqual(response.status_code, 403)
+
+    def test_supervisor_tree_data_endpoint_only_returns_accessible_courses(self):
+        self.client.force_login(self.shared_supervisor)
+        response = self.client.get(reverse("supervisor_tree_data"))
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(len(payload["courses"]), 1)
+        self.assertEqual(payload["courses"][0]["title"], "Landing Course A")
+
+    def test_supervisor_tree_data_endpoint_returns_nested_structure(self):
+        self.client.force_login(self.administrator)
+        response = self.client.get(reverse("supervisor_tree_data"))
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        course_node = next(
+            node for node in payload["courses"] if node["title"] == "Landing Course A"
+        )
+        self.assertEqual(course_node["tutorials"][0]["title"], "Landing Tutorial A")
+        self.assertEqual(
+            course_node["tutorials"][0]["exercises"][0]["title"],
+            "Landing Exercise A",
+        )
+        self.assertEqual(
+            course_node["tutorials"][0]["exercises"][0]["variants"][0]["exercise_text"],
+            "Landing Variant A",
+        )
+        self.assertEqual(
+            course_node["tutorials"][0]["exercises"][0]["variants"][0]["parts"][0]["label"],
+            "a",
+        )
+
+    def test_supervisor_can_update_accessible_tutorial_via_tree_endpoint(self):
+        self.client.force_login(self.shared_supervisor)
+        response = self.client.post(
+            reverse(
+                "supervisor_tree_node_update",
+                kwargs={"node_type": "tutorial", "node_id": self.tutorial_a.id},
+            ),
+            {
+                "title": "Landing Tutorial A Updated",
+                "description": self.tutorial_a.description,
+                "order_index": self.tutorial_a.order_index,
+                "is_active": "on",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["node_type"], "tutorial")
+        self.tutorial_a.refresh_from_db()
+        self.assertEqual(self.tutorial_a.title, "Landing Tutorial A Updated")
+
+    def test_student_cannot_update_tree_node(self):
+        self.client.force_login(self.student)
+        response = self.client.post(
+            reverse(
+                "supervisor_tree_node_update",
+                kwargs={"node_type": "tutorial", "node_id": self.tutorial_a.id},
+            ),
+            {
+                "title": "Blocked update",
+                "description": self.tutorial_a.description,
+                "order_index": self.tutorial_a.order_index,
+                "is_active": "on",
+            },
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_supervisor_cannot_update_unrelated_tree_node(self):
+        tutorial_b = Tutorial.objects.create(
+            course=self.course_b,
+            title="Landing Tutorial B",
+            order_index=1,
+        )
+        self.client.force_login(self.shared_supervisor)
+        response = self.client.post(
+            reverse(
+                "supervisor_tree_node_update",
+                kwargs={"node_type": "tutorial", "node_id": tutorial_b.id},
+            ),
+            {
+                "title": "Blocked update",
+                "description": tutorial_b.description,
+                "order_index": tutorial_b.order_index,
+                "is_active": "on",
+            },
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_supervisor_can_create_tutorial_via_tree_endpoint(self):
+        self.client.force_login(self.shared_supervisor)
+        response = self.client.post(
+            reverse("supervisor_tree_node_create"),
+            {
+                "node_type": "tutorial",
+                "parent_id": str(self.course_a.id),
+                "title": "Created Tutorial",
+                "description": "Created from tree",
+                "is_active": "on",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        created = Tutorial.objects.get(course=self.course_a, title="Created Tutorial")
+        self.assertEqual(payload["created_node"]["id"], created.id)
+
+    def test_supervisor_can_create_exercise_variant_and_part_via_tree_endpoint(self):
+        self.client.force_login(self.shared_supervisor)
+        exercise_response = self.client.post(
+            reverse("supervisor_tree_node_create"),
+            {
+                "node_type": "exercise",
+                "parent_id": str(self.tutorial_a.id),
+                "title": "Created Exercise",
+                "is_active": "on",
+            },
+        )
+        self.assertEqual(exercise_response.status_code, 200)
+        created_exercise_id = exercise_response.json()["created_node"]["id"]
+        created_exercise = Exercise.objects.get(pk=created_exercise_id)
+
+        variant_response = self.client.post(
+            reverse("supervisor_tree_node_create"),
+            {
+                "node_type": "variant",
+                "parent_id": str(created_exercise.id),
+                "exercise_text": "Created variant text",
+                "supervisor_notes": "Created note",
+            },
+        )
+        self.assertEqual(variant_response.status_code, 200)
+        created_variant_id = variant_response.json()["created_node"]["id"]
+        created_variant = ExerciseVariant.objects.get(pk=created_variant_id)
+
+        part_response = self.client.post(
+            reverse("supervisor_tree_node_create"),
+            {
+                "node_type": "part",
+                "parent_id": str(created_variant.id),
+                "label": "b",
+                "prompt_text": "Created part prompt",
+                "answer_type": ExerciseVariant.PartAnswerType.DOCUMENT_UPLOAD,
+                "available_points": "2.00",
+            },
+        )
+        self.assertEqual(part_response.status_code, 200)
+        created_part_id = part_response.json()["created_node"]["id"]
+        created_part = ExercisePart.objects.get(pk=created_part_id)
+        self.assertEqual(created_part.label, "b")
+        self.assertEqual(created_part.variant_id, created_variant.id)
+
+    def test_student_cannot_create_tree_node(self):
+        self.client.force_login(self.student)
+        response = self.client.post(
+            reverse("supervisor_tree_node_create"),
+            {
+                "node_type": "tutorial",
+                "parent_id": str(self.course_a.id),
+                "title": "Blocked tutorial",
+                "description": "",
+                "is_active": "on",
+            },
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_supervisor_can_delete_accessible_part_via_tree_endpoint(self):
+        self.client.force_login(self.shared_supervisor)
+        response = self.client.post(
+            reverse(
+                "supervisor_tree_node_delete",
+                kwargs={"node_type": "part", "node_id": self.part_a.id},
+            ),
+            {"confirm": "yes"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["deleted_id"], self.part_a.id)
+        self.assertFalse(ExercisePart.objects.filter(id=self.part_a.id).exists())
+
+    def test_delete_endpoint_requires_confirmation_flag(self):
+        self.client.force_login(self.shared_supervisor)
+        response = self.client.post(
+            reverse(
+                "supervisor_tree_node_delete",
+                kwargs={"node_type": "part", "node_id": self.part_a.id},
+            ),
+            {},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue(ExercisePart.objects.filter(id=self.part_a.id).exists())
+
+    def test_student_cannot_delete_tree_node(self):
+        self.client.force_login(self.student)
+        response = self.client.post(
+            reverse(
+                "supervisor_tree_node_delete",
+                kwargs={"node_type": "part", "node_id": self.part_a.id},
+            ),
+            {"confirm": "yes"},
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_supervisor_cannot_delete_unrelated_tree_node(self):
+        tutorial_b = Tutorial.objects.create(
+            course=self.course_b,
+            title="Unrelated Tutorial",
+            order_index=2,
+        )
+        self.client.force_login(self.shared_supervisor)
+        response = self.client.post(
+            reverse(
+                "supervisor_tree_node_delete",
+                kwargs={"node_type": "tutorial", "node_id": tutorial_b.id},
+            ),
+            {"confirm": "yes"},
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(Tutorial.objects.filter(id=tutorial_b.id).exists())
 
     def test_supervisor_pages_show_only_accessible_courses_for_supervisor(self):
         self.client.force_login(self.shared_supervisor)
