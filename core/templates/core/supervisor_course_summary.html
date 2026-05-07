@@ -8,6 +8,17 @@
         .cell-missing { color: #b00020; }
         .cell-ungraded { color: #9c6b00; }
         .cell-graded { color: #0b6b2f; }
+        .cell-graded a,
+        .cell-graded a:visited {
+            color: #0b6b2f;
+        }
+        table thead th {
+            background: #a5d7d2;
+        }
+        table tbody th,
+        table tbody td {
+            background: #f0f0f0;
+        }
     </style>
 </head>
 <body>
@@ -43,9 +54,14 @@
         <table border="1" cellpadding="4" cellspacing="0">
             <thead>
                 <tr>
-                    <th>Student</th>
+                    <th rowspan="2">Student</th>
+                    {% for group in table.exercise_groups %}
+                        <th colspan="{{ group.colspan }}">{{ group.exercise_title }}</th>
+                    {% endfor %}
+                </tr>
+                <tr>
                     {% for part in table.columns %}
-                        <th>{{ part.variant.exercise.title }} - Part {{ part.label }}</th>
+                        <th>{{ part.label }}</th>
                     {% endfor %}
                 </tr>
             </thead>

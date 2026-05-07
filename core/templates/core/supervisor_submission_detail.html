@@ -7,34 +7,47 @@
 </head>
 <body>
     <h1>Submission Detail</h1>
-    <p>Student: {{ submission.student.email }}</p>
-    <p>Exercise: {{ submission.exercise.title }}</p>
-    <p>Assigned variant: {{ submission.assigned_variant.exercise_text }}</p>
-    <p>Status: {% if upload_result_part %}{{ upload_result_part.is_manually_graded|yesno:"Graded,Ungraded" }}{% else %}Ungraded{% endif %}</p>
-    {% if numerical_result_parts %}
-        {% for part_result in numerical_result_parts %}
-            <p>Part {{ part_result.exercise_part.label }} submitted numerical value: {{ part_result.submitted_numerical_value|default:"-" }}</p>
-            <p>Part {{ part_result.exercise_part.label }} reference solution: {{ part_result.reference_value_used|default:"-" }}</p>
-            <p>Part {{ part_result.exercise_part.label }} tolerance: {{ part_result.tolerance_used|default:"-" }}</p>
-        {% endfor %}
-        <p>Correctness: {{ submission.is_correct|default:"-" }}</p>
-    {% endif %}
-
-    <p>
-        Uploaded file:
-        {% if upload_result_part and upload_result_part.uploaded_file %}
-            <a href="{% url 'supervisor_submission_file_download' submission.id %}">
-                {{ upload_result_part.uploaded_file.name }}
-            </a>
-        {% else %}
-            -
-        {% endif %}
-    </p>
-
-    <p>Score: {{ submission.score }}</p>
-    {% if upload_result_part and upload_result_part.feedback %}
-        <p>Feedback: {{ upload_result_part.feedback }}</p>
-    {% endif %}
+    <p><strong>Student:</strong> {{ submission.student.email }}</p>
+    <p><strong>Exercise:</strong> {{ submission.exercise.title }}</p>
+    <p><strong>Assigned variant:</strong> {{ submission.assigned_variant.exercise_text }}</p>
+    <hr>
+    <table border="1" cellpadding="4" cellspacing="0">
+        <thead>
+            <tr>
+                <th>Teil</th>
+                <th>Submitted value</th>
+                <th>Reference solution</th>
+                <th>Tolerance</th>
+                <th>Awarded points</th>
+                <th>Available points</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% if upload_result_part %}
+                <tr>
+                    <th>Status</th>
+                    <td colspan="5">{{ upload_result_part.is_manually_graded|yesno:"Graded,Ungraded" }}</td>
+                </tr>
+            {% endif %}
+            {% for row in detail_rows %}
+                <tr>
+                    <th>Teil {{ row.part_label }}</th>
+                    <td>{{ row.submitted_value }}</td>
+                    <td>{{ row.reference_solution }}</td>
+                    <td>{{ row.tolerance }}</td>
+                    <td>{{ row.awarded_points }}</td>
+                    <td>{{ row.available_points }}</td>
+                </tr>
+            {% endfor %}
+            {% if upload_result_part and upload_result_part.feedback %}
+                <tr>
+                    <th>Feedback</th>
+                    <td colspan="5">{{ upload_result_part.feedback }}</td>
+                </tr>
+            {% endif %}
+        </tbody>
+    </table>
+    <p><strong>Score:</strong> {{ submission.score }}</p>
 
     {% if upload_result_part %}
         <h2>Manual grading</h2>

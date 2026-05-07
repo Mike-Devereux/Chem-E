@@ -978,6 +978,29 @@ class SupervisorSubmissionDetailView(SupervisorRequiredMixin, DetailView):
         context["numerical_result_parts"] = self.object.parts.filter(
             exercise_part__answer_type=ExerciseVariant.PartAnswerType.NUMERICAL
         ).select_related("exercise_part")
+        part_results = self.object.parts.select_related("exercise_part").order_by(
+            "exercise_part__order_index",
+            "id",
+        )
+        detail_rows = []
+        for part_result in part_results:
+            submitted_value = "-"
+            if part_result.submitted_numerical_value is not None:
+                submitted_value = str(part_result.submitted_numerical_value)
+            elif part_result.uploaded_file:
+                submitted_value = part_result.uploaded_file.name
+
+            detail_rows.append(
+                {
+                    "part_label": part_result.exercise_part.label,
+                    "submitted_value": submitted_value,
+                    "reference_solution": part_result.reference_value_used or "-",
+                    "tolerance": part_result.tolerance_used or "-",
+                    "awarded_points": part_result.score,
+                    "available_points": part_result.exercise_part.available_points,
+                }
+            )
+        context["detail_rows"] = detail_rows
         return context
 
     def post(self, request, *args, **kwargs):
@@ -1113,6 +1136,19 @@ class SupervisorCourseSummaryView(SupervisorRequiredMixin, DetailView):
                     "id",
                 )
             )
+            exercise_groups = []
+            for part in exercise_parts:
+                exercise = part.variant.exercise
+                if not exercise_groups or exercise_groups[-1]["exercise_id"] != exercise.id:
+                    exercise_groups.append(
+                        {
+                            "exercise_id": exercise.id,
+                            "exercise_title": exercise.title,
+                            "colspan": 1,
+                        }
+                    )
+                else:
+                    exercise_groups[-1]["colspan"] += 1
             rows = []
             for student in students:
                 cells = []
@@ -1129,6 +1165,7 @@ class SupervisorCourseSummaryView(SupervisorRequiredMixin, DetailView):
                 {
                     "tutorial": tutorial,
                     "columns": exercise_parts,
+                    "exercise_groups": exercise_groups,
                     "rows": rows,
                 }
             )

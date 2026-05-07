@@ -1621,11 +1621,16 @@ class SupervisorExerciseSubmissionsViewTests(TestCase):
         self.assertContains(response, self.exercise.title)
         self.assertContains(response, self.variant.exercise_text)
         self.assertContains(response, "3.00")
-        self.assertContains(response, "Status: Ungraded")
-        self.assertContains(response, "Part a submitted numerical value: 1.0000")
-        self.assertContains(response, "Part a reference solution:")
-        self.assertContains(response, "Part a tolerance:")
-        self.assertContains(response, "Correctness: True")
+        self.assertNotContains(response, "Ungraded")
+        self.assertContains(response, "Submitted value")
+        self.assertContains(response, "Reference solution")
+        self.assertContains(response, "Tolerance")
+        self.assertContains(response, "Awarded points")
+        self.assertContains(response, "Available points")
+        self.assertContains(response, "Teil a")
+        self.assertContains(response, "1.0000")
+        self.assertNotContains(response, "Correctness")
+        self.assertContains(response, "Score:")
 
     def test_student_cannot_access_supervisor_submission_detail(self):
         result = Result.objects.get(student=self.student, exercise=self.exercise, is_archived=False)
@@ -1889,6 +1894,8 @@ class SupervisorGradingWorkflowTests(TestCase):
             reverse("supervisor_submission_detail", args=[numerical_result.id])
         )
         self.assertNotContains(numerical_response, "Manual grading")
+        self.assertNotContains(numerical_response, "Ungraded")
+        self.assertNotContains(numerical_response, "Uploaded file")
 
         # Upload exercise result should show grading form.
         upload_exercise = Exercise.objects.create(
@@ -1979,7 +1986,7 @@ class SupervisorGradingWorkflowTests(TestCase):
             {"score": "4.75", "feedback": "Good work overall."},
         )
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Status: Graded")
+        self.assertContains(response, "Graded")
         self.assertEqual(
             Result.objects.filter(student=self.student, exercise=upload_exercise, is_archived=False).count(),
             1,
@@ -2448,6 +2455,16 @@ class SupervisorCourseSummaryViewTests(TestCase):
             response,
             reverse("supervisor_submission_detail", args=[ungraded_result.id]),
         )
+
+    def test_summary_table_uses_grouped_exercise_header_with_part_label_row(self):
+        self.client.force_login(self.owner_supervisor)
+        response = self.client.get(reverse("supervisor_course_summary", args=[self.course.id]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'rowspan="2">Student</th>', html=False)
+        self.assertContains(response, f">{self.exercise_1.title}</th>", html=False)
+        self.assertContains(response, f">{self.exercise_2.title}</th>", html=False)
+        self.assertContains(response, ">a</th>", html=False)
+        self.assertNotContains(response, f"{self.exercise_1.title} - Part a")
 
     def test_access_control_for_summary_endpoint(self):
         summary_url = reverse("supervisor_course_summary", args=[self.course.id])
