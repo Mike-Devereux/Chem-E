@@ -10,7 +10,6 @@
     <ul>
         <li><a href="{% url 'supervisor_tree' %}">Supervisor content editor (primary single-page workflow)</a></li>
         <li><a href="{% url 'supervisor_course_summary_list' %}">Supervisor course summaries</a></li>
-        <li><a href="{% url 'supervisor_course_manage_list' %}">Legacy multi-page editor (fallback)</a></li>
         <li><a href="{% url 'home' %}">Student landing page (available courses)</a></li>
         {% if request.user.is_superuser or request.user.role == "administrator" %}
         <li><a href="/admin/">Admin area</a></li>
