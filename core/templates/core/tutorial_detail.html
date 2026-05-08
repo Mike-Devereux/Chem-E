@@ -21,6 +21,15 @@
             clip: rect(0, 0, 0, 0);
             border: 0;
         }
+        .tutorial-submit-button {
+            display: inline-flex !important;
+            width: fit-content !important;
+            max-width: max-content;
+            white-space: nowrap;
+        }
+        .tutorial-submit-wrap {
+            display: inline-block;
+        }
     </style>
 </head>
 <body>
@@ -31,7 +40,19 @@
     {% endif %}
 
         <h2>Übungen</h2>
+    {% if submission_errors %}
+        <ul>
+            {% for error in submission_errors %}
+                <li>{{ error }}</li>
+            {% endfor %}
+        </ul>
+    {% endif %}
     {% if exercises %}
+        {% if has_any_numerical_parts %}
+            <form id="tutorial-numerical-submit-form" method="post" action="{% url 'tutorial_detail' tutorial.id %}">
+                {% csrf_token %}
+            </form>
+        {% endif %}
         {% for row in exercise_rows %}
             <section>
                 <h3>
@@ -59,10 +80,12 @@
                 {% endif %}
 
                 {% if row.parts %}
+                    {% if row.has_upload_parts %}
                     <form method="post" enctype="multipart/form-data" action="{% url 'exercise_detail' row.exercise.pk %}">
                         {% csrf_token %}
                         <input type="hidden" name="next" value="{{ request.get_full_path }}">
                         <input type="hidden" name="force_replace_graded_upload" value="0">
+                    {% endif %}
                         {% for part in row.parts %}
                             <fieldset>
                                 <legend>Teil {{ part.label }}</legend>
@@ -78,7 +101,7 @@
                                     <label for="numerical_part_{{ part.id }}">
                                         Lösung{% if part.display_tolerance != "0" %} (Präzision +/- {{ part.display_tolerance }}){% endif %}
                                     </label>
-                                    <input id="numerical_part_{{ part.id }}" name="numerical_part_{{ part.id }}" type="text" value="{{ part.prefill_numerical_value|default_if_none:'' }}">
+                                    <input id="numerical_part_{{ part.id }}" name="numerical_part_{{ part.id }}" type="text" value="{{ part.prefill_numerical_value|default_if_none:'' }}" form="tutorial-numerical-submit-form">
                                     {% if part.points_display %}
                                         <span>{{ part.points_display }}</span>
                                     {% endif %}
@@ -98,11 +121,20 @@
                                 {% endif %}
                             </fieldset>
                         {% endfor %}
-                        <button type="submit">Senden</button>
+                        {% if row.has_upload_parts %}
+                            <button type="submit">Senden</button>
+                        {% endif %}
+                    {% if row.has_upload_parts %}
                     </form>
+                    {% endif %}
                 {% endif %}
             </section>
         {% endfor %}
+        {% if has_any_numerical_parts %}
+            <div class="tutorial-submit-wrap">
+                <button type="submit" form="tutorial-numerical-submit-form" class="tutorial-submit-button">Senden</button>
+            </div>
+        {% endif %}
     {% else %}
         <p>No exercises available for this tutorial.</p>
     {% endif %}

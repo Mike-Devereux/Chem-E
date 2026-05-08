@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Archive Center - {{ course.title }}</title>
+</head>
+<body>
+    <h1>Archive Center: {{ course.title }}</h1>
+    <p>Current (unarchived) results: {{ current_results_count }}</p>
+
+    <section>
+        <h2>Create new archive batch</h2>
+        <p>Archive all current results for this course into a new batch.</p>
+        <p><a href="{% url 'supervisor_course_archive_results' course.id %}">Create archive batch</a></p>
+    </section>
+
+    <section>
+        <h2>View existing archive batches</h2>
+        {% if archive_batches %}
+            <table border="1" cellpadding="4" cellspacing="0">
+                <thead>
+                    <tr>
+                        <th>Archive date</th>
+                        <th>Created by</th>
+                        <th>Label / note</th>
+                        <th>Result count</th>
+                        <th>Detail</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for batch in archive_batches %}
+                        <tr>
+                            <td>{{ batch.created_at }}</td>
+                            <td>{% if batch.created_by %}{{ batch.created_by.email }}{% else %}-{% endif %}</td>
+                            <td>{{ batch.note|default:"-" }}</td>
+                            <td>{{ batch.result_count }}</td>
+                            <td><a href="{% url 'supervisor_course_archive_batch_detail' batch.id %}">View</a></td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <p>No archive batches yet.</p>
+        {% endif %}
+    </section>
+
+    <p><a href="{% url 'supervisor_course_summary' course.id %}">Back to course summary</a></p>
+</body>
+</html>

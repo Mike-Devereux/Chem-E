@@ -1003,13 +1003,35 @@ class ExerciseVariantAssignmentTests(TestCase):
             1,
         )
 
-    def test_tutorial_page_uses_standard_exercise_route(self):
+    def test_multiple_students_are_distributed_across_variants(self):
+        students = [self.student]
+        for idx in range(2, 5):
+            students.append(
+                User.objects.create_user(
+                    email=f"student_variant_{idx}@unibas.ch",
+                    password="test-password",
+                    role=User.Role.STUDENT,
+                )
+            )
+
+        assigned_variant_ids = set()
+        for student in students:
+            self.client.force_login(student)
+            response = self.client.get(reverse("exercise_detail", args=[self.exercise.id]))
+            self.assertEqual(response.status_code, 200)
+            result = Result.objects.get(student=student, exercise=self.exercise, is_archived=False)
+            assigned_variant_ids.add(result.assigned_variant_id)
+
+        self.assertGreaterEqual(len(assigned_variant_ids), 2)
+
+    def test_tutorial_page_uses_tutorial_route_for_numerical_submission(self):
         self.client.force_login(self.student)
         response = self.client.get(reverse("tutorial_detail", args=[self.tutorial.id]))
         self.assertEqual(response.status_code, 200)
         self.assertContains(
             response,
-            reverse("exercise_detail", args=[self.exercise.id]),
+            f'action="{reverse("tutorial_detail", args=[self.tutorial.id])}"',
+            html=False,
         )
 
     def test_tutorial_page_shows_not_completed_status_and_score_before_submission(self):
@@ -1020,7 +1042,7 @@ class ExerciseVariantAssignmentTests(TestCase):
 
     def test_tutorial_page_shows_completed_status_and_score_after_submission(self):
         self.client.force_login(self.student)
-        self.client.get(reverse("exercise_detail", args=[self.exercise.id]))
+        self.client.get(reverse("tutorial_detail", args=[self.tutorial.id]))
         assigned_result = Result.objects.get(
             student=self.student,
             exercise=self.exercise,
@@ -1034,8 +1056,8 @@ class ExerciseVariantAssignmentTests(TestCase):
         self.assertIsNotNone(assigned_part)
         self.assertIsNotNone(assigned_part.reference_solution)
         self.client.post(
-            reverse("exercise_detail", args=[self.exercise.id]),
-            {"submitted_value": str(assigned_part.reference_solution)},
+            reverse("tutorial_detail", args=[self.tutorial.id]),
+            {f"numerical_part_{assigned_part.id}": str(assigned_part.reference_solution)},
         )
         response = self.client.get(reverse("tutorial_detail", args=[self.tutorial.id]))
         self.assertEqual(response.status_code, 200)
@@ -1088,7 +1110,7 @@ class ExerciseVariantAssignmentTests(TestCase):
         self.assertContains(response, "Not completed (0 / 1)")
         self.assertNotContains(response, "Not completed (0 / 2)")
 
-    def test_submit_from_tutorial_page_redirects_back_and_keeps_other_exercises_visible(self):
+    def test_submit_from_tutorial_page_grades_all_numerical_parts_and_keeps_other_exercises_visible(self):
         second_exercise = Exercise.objects.create(
             tutorial=self.tutorial,
             title="Second Exercise",
@@ -1113,7 +1135,7 @@ class ExerciseVariantAssignmentTests(TestCase):
 
         self.client.force_login(self.student)
         tutorial_url = reverse("tutorial_detail", args=[self.tutorial.id])
-        self.client.get(reverse("exercise_detail", args=[self.exercise.id]))
+        self.client.get(tutorial_url)
         assigned_result = Result.objects.get(
             student=self.student,
             exercise=self.exercise,
@@ -1125,15 +1147,33 @@ class ExerciseVariantAssignmentTests(TestCase):
             .first()
         )
         self.assertIsNotNone(assigned_part)
+        second_result = Result.objects.get(
+            student=self.student,
+            exercise=second_exercise,
+            is_archived=False,
+        )
+        second_part = (
+            ExercisePart.objects.filter(variant=second_result.assigned_variant)
+            .order_by("order_index", "id")
+            .first()
+        )
+        self.assertIsNotNone(second_part)
         response = self.client.post(
-            reverse("exercise_detail", args=[self.exercise.id]),
-            {f"numerical_part_{assigned_part.id}": str(assigned_part.reference_solution), "next": tutorial_url},
+            tutorial_url,
+            {
+                f"numerical_part_{assigned_part.id}": str(assigned_part.reference_solution),
+                f"numerical_part_{second_part.id}": str(second_part.reference_solution),
+            },
             follow=True,
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.request["PATH_INFO"], tutorial_url)
         self.assertContains(response, self.exercise.title)
         self.assertContains(response, second_exercise.title)
+        assigned_result.refresh_from_db()
+        second_result.refresh_from_db()
+        self.assertEqual(str(assigned_result.score), "1.00")
+        self.assertEqual(str(second_result.score), "1.00")
 
     def test_course_detail_marks_tutorial_as_ausstehend_by_default(self):
         self.client.force_login(self.student)
@@ -2878,6 +2918,34 @@ class SupervisorCourseSummaryViewTests(TestCase):
         self.assertContains(response, ">a</th>", html=False)
         self.assertNotContains(response, f"{self.exercise_1.title} - Part a")
 
+    def test_summary_columns_exclude_parts_from_unassigned_variants(self):
+        extra_variant = ExerciseVariant.objects.create(
+            exercise=self.exercise_1,
+            exercise_text="Unassigned variant",
+            reference_solution="3.0000",
+            absolute_tolerance="0.1000",
+            available_points="9.00",
+        )
+        ExercisePart.objects.create(
+            variant=extra_variant,
+            label="b",
+            prompt_text="Extra unassigned part",
+            answer_type=ExerciseVariant.PartAnswerType.NUMERICAL,
+            reference_solution="3.0000",
+            absolute_tolerance="0.1000",
+            available_points="9.00",
+            order_index=2,
+        )
+
+        self.client.force_login(self.owner_supervisor)
+        response = self.client.get(reverse("supervisor_course_summary", args=[self.course.id]))
+        self.assertEqual(response.status_code, 200)
+        tutorial_1_table = next(
+            table for table in response.context["tutorial_tables"] if table["tutorial"].id == self.tutorial_1.id
+        )
+        self.assertEqual(len(tutorial_1_table["columns"]), 2)
+        self.assertNotContains(response, ">b</th>", html=False)
+
     def test_access_control_for_summary_endpoint(self):
         summary_url = reverse("supervisor_course_summary", args=[self.course.id])
 
@@ -2895,6 +2963,15 @@ class SupervisorCourseSummaryViewTests(TestCase):
 
         self.client.force_login(self.student_a)
         self.assertEqual(self.client.get(summary_url).status_code, 403)
+
+    def test_summary_includes_link_to_archive_management_page(self):
+        self.client.force_login(self.owner_supervisor)
+        response = self.client.get(reverse("supervisor_course_summary", args=[self.course.id]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            reverse("supervisor_course_archive_manage", args=[self.course.id]),
+        )
 
 
 class SupervisorCourseArchiveResultsViewTests(TestCase):
@@ -3024,6 +3101,42 @@ class SupervisorCourseArchiveResultsViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Current (unarchived) results in this course: 2")
         self.assertContains(response, 'name="note"', html=False)
+
+    def test_archive_manage_page_lists_actions_and_batches(self):
+        batch = ArchiveBatch.objects.create(
+            course=self.course,
+            created_by=self.owner_supervisor,
+            note="Archive batch note",
+        )
+        self.current_result.archive_batch = batch
+        self.current_result.is_archived = True
+        self.current_result.save(update_fields=["archive_batch", "is_archived"])
+
+        self.client.force_login(self.owner_supervisor)
+        response = self.client.get(reverse("supervisor_course_archive_manage", args=[self.course.id]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Current (unarchived) results: 1")
+        self.assertContains(response, reverse("supervisor_course_archive_results", args=[self.course.id]))
+        self.assertContains(response, "Archive batch note")
+        self.assertContains(
+            response,
+            reverse("supervisor_course_archive_batch_detail", args=[batch.id]),
+        )
+
+    def test_archive_manage_page_access_control(self):
+        manage_url = reverse("supervisor_course_archive_manage", args=[self.course.id])
+
+        self.client.force_login(self.shared_supervisor)
+        self.assertEqual(self.client.get(manage_url).status_code, 200)
+
+        self.client.force_login(self.administrator)
+        self.assertEqual(self.client.get(manage_url).status_code, 200)
+
+        self.client.force_login(self.unrelated_supervisor)
+        self.assertEqual(self.client.get(manage_url).status_code, 403)
+
+        self.client.force_login(self.student)
+        self.assertEqual(self.client.get(manage_url).status_code, 403)
 
     def test_post_archives_only_current_results_for_selected_course(self):
         self.client.force_login(self.owner_supervisor)

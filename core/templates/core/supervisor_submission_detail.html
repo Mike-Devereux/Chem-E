@@ -13,7 +13,8 @@
     <h1>Submission Detail</h1>
     <p><strong>Student:</strong> {{ submission.student.email }}</p>
     <p><strong>Exercise:</strong> {{ submission.exercise.title }}</p>
-    <p><strong>Assigned variant:</strong> {{ submission.assigned_variant.exercise_text }}</p>
+    <p><strong>Assigned variant:</strong> (id={{ submission.assigned_variant.id }})</p>
+    <div>{{ submission.assigned_variant.exercise_text|safe }}</div>
     {% if upload_result_part %}
         <p>
             <strong>Status:</strong>

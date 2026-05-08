@@ -23,6 +23,9 @@
         table tbody td {
             background: #f0f0f0;
         }
+        .summary-footer-gap {
+            margin-bottom: 40px;
+        }
     </style>
 </head>
 <body>
@@ -52,6 +55,9 @@
         <span class="cell-missing">- = No submission</span> |
         <span class="cell-ungraded">Ungraded submission</span> |
         <span class="cell-graded">Score = Graded submission</span>
+    </p>
+    <p>
+        <a href="{% url 'supervisor_course_archive_manage' course.id %}">Manage archives</a>
     </p>
     {% for table in tutorial_tables %}
         <h2>{{ table.tutorial.title }}</h2>
@@ -101,5 +107,6 @@
     {% empty %}
         <p>No tutorial results available for this filter selection.</p>
     {% endfor %}
+    <div class="summary-footer-gap" aria-hidden="true"></div>
 </body>
 </html>

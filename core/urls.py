@@ -12,6 +12,7 @@ from .views import (
     SupervisorArchivedSubmissionFileDownloadView,
     SupervisorCourseSummaryListView,
     SupervisorCourseArchiveBatchDetailView,
+    SupervisorCourseArchiveManageView,
     SupervisorCourseArchivesView,
     SupervisorCourseArchiveResultsView,
     SupervisorLandingView,
@@ -128,6 +129,11 @@ urlpatterns = [
         "supervisor/courses/<int:course_id>/summary/",
         SupervisorCourseSummaryView.as_view(),
         name="supervisor_course_summary",
+    ),
+    path(
+        "supervisor/courses/<int:course_id>/archives/manage/",
+        SupervisorCourseArchiveManageView.as_view(),
+        name="supervisor_course_archive_manage",
     ),
     path(
         "supervisor/courses/summary",

@@ -117,6 +117,7 @@ def _get_or_assign_student_result_for_exercise(student, exercise):
     variants = list(exercise.variants.order_by("id"))
     if not variants:
         return None
+    assigned_variant = _select_variant_for_student(exercise, variants)
     try:
         result, _ = Result.objects.get_or_create(
             student=student,
@@ -125,7 +126,7 @@ def _get_or_assign_student_result_for_exercise(student, exercise):
             defaults={
                 "course": exercise.tutorial.course,
                 "tutorial": exercise.tutorial,
-                "assigned_variant": random.choice(variants),
+                "assigned_variant": assigned_variant,
             },
         )
     except IntegrityError:
@@ -135,6 +136,31 @@ def _get_or_assign_student_result_for_exercise(student, exercise):
             is_archived=False,
         )
     return result
+
+
+def _select_variant_for_student(exercise, variants):
+    if not variants:
+        return None
+    variant_ids = [variant.id for variant in variants]
+    usage_rows = (
+        Result.objects.filter(
+            exercise=exercise,
+            is_archived=False,
+            assigned_variant_id__in=variant_ids,
+        )
+        .values("assigned_variant_id")
+        .annotate(assigned_count=Count("id"))
+    )
+    usage_by_variant_id = {
+        row["assigned_variant_id"]: row["assigned_count"] for row in usage_rows
+    }
+    min_count = min(usage_by_variant_id.get(variant_id, 0) for variant_id in variant_ids)
+    candidate_variants = [
+        variant
+        for variant in variants
+        if usage_by_variant_id.get(variant.id, 0) == min_count
+    ]
+    return random.choice(candidate_variants)
 
 
 def _serialize_part_node(part):
@@ -748,7 +774,93 @@ class TutorialDetailView(LoginRequiredMixin, DetailView):
                 }
             )
         context["exercise_rows"] = exercise_rows
+        context["has_any_numerical_parts"] = any(
+            row["has_numerical_parts"] for row in exercise_rows
+        )
+        context["submission_errors"] = kwargs.get("submission_errors", [])
         return context
+
+    def post(self, request, *args, **kwargs):
+        self.object = self.get_object()
+        if request.user.role != User.Role.STUDENT:
+            raise PermissionDenied
+
+        exercises = list(
+            self.object.exercises.filter(is_active=True).order_by("order_index", "id")
+        )
+        submission_errors = []
+        touched_results = {}
+
+        for exercise in exercises:
+            result = _get_or_assign_student_result_for_exercise(request.user, exercise)
+            if not result or not result.assigned_variant:
+                continue
+            parts = result.assigned_variant.parts.order_by("order_index", "id")
+            for part in parts:
+                if part.answer_type != ExerciseVariant.PartAnswerType.NUMERICAL:
+                    continue
+                raw_value = request.POST.get(f"numerical_part_{part.id}", "").strip()
+                if raw_value == "":
+                    continue
+                try:
+                    submitted_value = parse_decimal_value(raw_value)
+                except ValueError:
+                    submission_errors.append(
+                        f"Part {part.label}: enter a valid numerical value."
+                    )
+                    continue
+
+                is_correct = None
+                score = Decimal("0")
+                if (
+                    part.reference_solution is not None
+                    and part.absolute_tolerance is not None
+                ):
+                    is_correct = is_numerical_answer_correct(
+                        submitted_value=submitted_value,
+                        reference_solution=part.reference_solution,
+                        absolute_tolerance=part.absolute_tolerance,
+                    )
+                    score = part.available_points if is_correct else Decimal("0")
+
+                ResultPart.objects.update_or_create(
+                    result=result,
+                    exercise_part=part,
+                    defaults={
+                        "submitted_numerical_value": submitted_value,
+                        "uploaded_file": None,
+                        "reference_value_used": part.reference_solution,
+                        "tolerance_used": part.absolute_tolerance,
+                        "is_correct": is_correct,
+                        "score": score,
+                        "is_manually_graded": True,
+                        "feedback": "",
+                        "graded_at": timezone.now(),
+                        "graded_by": None,
+                    },
+                )
+                touched = touched_results.setdefault(
+                    result.id,
+                    {"result": result, "numerical_correct_flags": []},
+                )
+                if is_correct is not None:
+                    touched["numerical_correct_flags"].append(bool(is_correct))
+
+        if submission_errors:
+            return self.render_to_response(
+                self.get_context_data(submission_errors=submission_errors)
+            )
+
+        for touched in touched_results.values():
+            result = touched["result"]
+            flags = touched["numerical_correct_flags"]
+            result.submitted_at = timezone.now()
+            result.is_correct = all(flags) if flags else None
+            result.save(update_fields=["submitted_at", "is_correct"])
+            result.recompute_total_score()
+            result.save(update_fields=["score"])
+
+        return redirect("tutorial_detail", pk=self.object.id)
 
 
 class ExerciseDetailView(LoginRequiredMixin, DetailView):
@@ -824,6 +936,7 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
         variants = list(self.object.variants.order_by("id"))
         if not variants:
             return None
+        assigned_variant = _select_variant_for_student(self.object, variants)
 
         try:
             result, _ = Result.objects.get_or_create(
@@ -833,7 +946,7 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
                 defaults={
                     "course": self.object.tutorial.course,
                     "tutorial": self.object.tutorial,
-                    "assigned_variant": random.choice(variants),
+                    "assigned_variant": assigned_variant,
                 },
             )
         except IntegrityError:
@@ -1354,28 +1467,45 @@ class SupervisorCourseSummaryView(SupervisorRequiredMixin, DetailView):
         )
         result_ids = [result.id for result in results]
         result_parts = list(
-            ResultPart.objects.filter(result_id__in=result_ids).select_related("exercise_part")
+            ResultPart.objects.filter(result_id__in=result_ids).select_related(
+                "exercise_part",
+                "exercise_part__variant",
+            )
         )
         result_by_student_exercise = {
             (result.student_id, result.exercise_id): result for result in results
         }
-        result_part_by_result_part = {
-            (result_part.result_id, result_part.exercise_part_id): result_part
-            for result_part in result_parts
-        }
+        result_part_by_result_exercise_label = {}
+        for result_part in result_parts:
+            exercise_id = result_part.exercise_part.variant.exercise_id
+            key = (result_part.result_id, exercise_id, result_part.exercise_part.label)
+            result_part_by_result_exercise_label[key] = result_part
 
         tutorial_tables = []
         tutorials_to_show = [selected_tutorial] if selected_tutorial else tutorials
         for tutorial in tutorials_to_show:
             tutorial_exercises = [exercise for exercise in exercises if exercise.tutorial_id == tutorial.id]
-            exercise_parts = list(
-                ExercisePart.objects.filter(variant__exercise__in=tutorial_exercises)
-                .select_related("variant__exercise")
-                .order_by(
-                    "variant__exercise__order_index",
-                    "variant__exercise_id",
-                    "order_index",
-                    "id",
+            tutorial_results = [result for result in results if result.tutorial_id == tutorial.id]
+            exercise_parts = []
+            seen_exercise_label = set()
+            tutorial_exercises_by_id = {exercise.id: exercise for exercise in tutorial_exercises}
+            for result in tutorial_results:
+                assigned_variant = result.assigned_variant
+                if not assigned_variant or assigned_variant.exercise_id not in tutorial_exercises_by_id:
+                    continue
+                variant_parts = assigned_variant.parts.order_by("order_index", "id")
+                for part in variant_parts:
+                    key = (assigned_variant.exercise_id, part.label)
+                    if key in seen_exercise_label:
+                        continue
+                    seen_exercise_label.add(key)
+                    exercise_parts.append(part)
+            exercise_parts.sort(
+                key=lambda part: (
+                    tutorial_exercises_by_id[part.variant.exercise_id].order_index,
+                    part.variant.exercise_id,
+                    part.order_index,
+                    part.id,
                 )
             )
             exercise_groups = []
@@ -1398,7 +1528,9 @@ class SupervisorCourseSummaryView(SupervisorRequiredMixin, DetailView):
                 for part in exercise_parts:
                     result = result_by_student_exercise.get((student.id, part.variant.exercise_id))
                     result_part = (
-                        result_part_by_result_part.get((result.id, part.id))
+                        result_part_by_result_exercise_label.get(
+                            (result.id, part.variant.exercise_id, part.label)
+                        )
                         if result
                         else None
                     )
@@ -1428,6 +1560,34 @@ class SupervisorCourseSummaryView(SupervisorRequiredMixin, DetailView):
         context["selected_student"] = selected_student
         context["selected_student_id"] = str(selected_student.id) if selected_student else ""
         return context
+
+
+class SupervisorCourseArchiveManageView(SupervisorRequiredMixin, View):
+    template_name = "core/supervisor_course_archive_manage.html"
+
+    def get(self, request, course_id):
+        course = get_object_or_404(Course, pk=course_id)
+        if not _user_can_access_course(request.user, course):
+            raise PermissionDenied
+        current_results_count = Result.objects.filter(
+            course=course,
+            archive_batch__isnull=True,
+        ).count()
+        archive_batches = (
+            ArchiveBatch.objects.filter(course=course)
+            .select_related("created_by")
+            .annotate(result_count=Count("results"))
+            .order_by("-created_at", "-id")
+        )
+        return render(
+            request,
+            self.template_name,
+            {
+                "course": course,
+                "current_results_count": current_results_count,
+                "archive_batches": archive_batches,
+            },
+        )
 
 
 class SupervisorCourseArchiveResultsView(SupervisorRequiredMixin, View):
