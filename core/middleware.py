@@ -31,6 +31,10 @@ HEADER_STYLE_BLOCK = """
         font-family: Inter, sans-serif;
         font-size: 15px;
     }
+    label {
+        font-family: Inter, sans-serif;
+        font-size: 15px;
+    }
     .chem-e-global-header {
         position: fixed;
         top: 0;

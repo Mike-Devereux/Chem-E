@@ -4,11 +4,68 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Supervisor Tree Editor</title>
+    <link href="https://cdn.jsdelivr.net/npm/quill@1.3.7/dist/quill.snow.css" rel="stylesheet">
+    <style>
+        .tree-action-link {
+            font-size: 12px;
+        }
+        .tree-workspace {
+            display: flex;
+            gap: 24px;
+            align-items: flex-start;
+        }
+        .tree-column {
+            flex: 1 1 60%;
+            min-width: 320px;
+        }
+        .editor-column {
+            flex: 0 0 420px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            padding: 12px;
+            box-sizing: border-box;
+            background: #fff;
+        }
+        .editor-column h2 {
+            margin-top: 0;
+        }
+        .quill-field {
+            margin-top: 0.25rem;
+        }
+        .quill-editor {
+            min-height: 120px;
+            background: #fff;
+        }
+        .ql-special-character {
+            width: auto !important;
+            padding: 0 8px;
+            font-size: 12px;
+        }
+    </style>
 </head>
 <body>
     <p><a href="{% url 'supervisor_landing' %}">Back to supervisor landing</a></p>
-    <h1>Supervisor tree editor</h1>
-    <p>Primary workflow: single-page tree editor with inline create, edit, and delete.</p>
+    <h1>Course editor</h1>
+    <p>Use this editor to create, edit, and delete courses, tutorials, exercises, and parts.</p>
+    <ul>
+        <li>When creating a course, you can add tutorials to the course.</li>
+        <li>When creating a tutorial, you can add exercises to the tutorial.</li>
+        <li>When creating an exercise, you can add variants to the exercise.</li>
+        <li>When creating a variant, you can add parts to the variant.</li>
+        <li>When creating a part, you can add a title, description, and type to the part.</li>
+    </ul>
+    <p>Each student will receive a random variant of the exercise. The types of exercises are:</p>
+    <ul>
+        <li>Numerical answer</li>
+        <li>Document upload</li>
+    </ul>
+    <p>
+        For numerical answer exercises, the student will enter a numerical answer.
+        For document upload exercises, the student will upload a document.
+        The student will be able to submit the answer multiple times.
+        The student will be able to see the result of the exercise after submission.
+    </p>
+    <h2>Course Tree</h2>
     <p>
         <label for="tree-filter-input">Filter tree:</label>
         <input id="tree-filter-input" type="text" placeholder="Type to filter titles">
@@ -16,20 +73,29 @@
         <button type="button" id="tree-collapse-all">Collapse all</button>
     </p>
     <div id="tree-status">Loading tree...</div>
-    <h2>Edit/Create node</h2>
-    <form id="tree-editor-form">
-        <p id="tree-editor-empty">Select a node using its Edit button.</p>
-        <div id="tree-editor-fields"></div>
-        <p><button type="submit" id="tree-editor-save" disabled>Save changes</button></p>
-        <pre id="tree-editor-errors"></pre>
-    </form>
-    <div id="tree-root"></div>
+    <div class="tree-workspace">
+        <section class="tree-column">
+            <div id="tree-root"></div>
+        </section>
+        <aside class="editor-column">
+            <h2>Editor</h2>
+            <form id="tree-editor-form">
+                <p id="tree-editor-empty">Select a node using its Edit button.</p>
+                <div id="tree-editor-fields"></div>
+                <p><button type="submit" id="tree-editor-save" disabled>Save changes</button></p>
+                <pre id="tree-editor-errors"></pre>
+            </form>
+        </aside>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/quill@1.3.7/dist/quill.min.js"></script>
     <script>
         let selectedNode = null;
         let editorMode = "edit";
         const expandedNodeStorageKey = "supervisorTreeExpandedNodesV1";
         let expandedNodeKeys = new Set();
         let requestInFlight = false;
+        const richTextFields = new Set(["exercise_text", "prompt_text"]);
+        const quillEditors = new Map();
 
         function getCsrfToken() {
             const cookieValue = document.cookie
@@ -39,10 +105,11 @@
         }
 
         function addEditButton(container, nodeType, nodeData) {
-            const button = document.createElement("button");
-            button.type = "button";
-            button.textContent = "Edit";
-            button.addEventListener("click", (event) => {
+            const link = document.createElement("a");
+            link.href = "#";
+            link.className = "tree-action-link";
+            link.textContent = "Edit";
+            link.addEventListener("click", (event) => {
                 event.preventDefault();
                 event.stopPropagation();
                 selectedNode = {nodeType: nodeType, nodeData: nodeData};
@@ -50,14 +117,15 @@
                 renderEditor();
             });
             container.appendChild(document.createTextNode(" "));
-            container.appendChild(button);
+            container.appendChild(link);
         }
 
         function addCreateButton(container, childType, parentType, parentId) {
-            const button = document.createElement("button");
-            button.type = "button";
-            button.textContent = `Add ${childType}`;
-            button.addEventListener("click", (event) => {
+            const link = document.createElement("a");
+            link.href = "#";
+            link.className = "tree-action-link";
+            link.textContent = `Add ${childType}`;
+            link.addEventListener("click", (event) => {
                 event.preventDefault();
                 event.stopPropagation();
                 selectedNode = {
@@ -70,14 +138,15 @@
                 renderEditor();
             });
             container.appendChild(document.createTextNode(" "));
-            container.appendChild(button);
+            container.appendChild(link);
         }
 
         function addDeleteButton(container, nodeType, nodeId) {
-            const button = document.createElement("button");
-            button.type = "button";
-            button.textContent = "Delete";
-            button.addEventListener("click", async (event) => {
+            const link = document.createElement("a");
+            link.href = "#";
+            link.className = "tree-action-link";
+            link.textContent = "Delete";
+            link.addEventListener("click", async (event) => {
                 if (requestInFlight) {
                     return;
                 }
@@ -121,7 +190,7 @@
                 }
             });
             container.appendChild(document.createTextNode(" "));
-            container.appendChild(button);
+            container.appendChild(link);
         }
 
         function nodeKey(nodeType, nodeId) {
@@ -177,6 +246,30 @@
             } catch (error) {
                 return {};
             }
+        }
+
+        function registerSpecialCharacterToolbarControl(quill) {
+            const toolbar = quill.getModule("toolbar");
+            const button = toolbar.container.querySelector(".ql-special-character");
+            if (!button) {
+                return;
+            }
+            button.addEventListener("click", () => {
+                const value = window.prompt("Enter a special character to insert:");
+                if (!value) {
+                    return;
+                }
+                const range = quill.getSelection(true);
+                const insertAt = range ? range.index : quill.getLength();
+                quill.insertText(insertAt, value);
+                quill.setSelection(insertAt + value.length, 0);
+            });
+        }
+
+        function syncQuillHiddenFields() {
+            quillEditors.forEach(({quill, hiddenInput}) => {
+                hiddenInput.value = quill.root.innerHTML;
+            });
         }
 
         function createNode(label, children, nodeType, nodeId) {
@@ -261,6 +354,7 @@
             const fieldsRoot = document.getElementById("tree-editor-fields");
             const saveButton = document.getElementById("tree-editor-save");
             const errorsRoot = document.getElementById("tree-editor-errors");
+            quillEditors.clear();
             fieldsRoot.innerHTML = "";
             errorsRoot.textContent = "";
             if (!selectedNode) {
@@ -276,7 +370,7 @@
             if (editorMode === "create") {
                 title.textContent = `Creating ${selectedNode.nodeType} under ${selectedNode.parentType} #${selectedNode.parentId}`;
             } else {
-                title.textContent = `Editing ${selectedNode.nodeType} #${selectedNode.nodeData.id}`;
+                title.textContent = `Editing ${selectedNode.nodeType} id ${selectedNode.nodeData.id}`;
             }
             fieldsRoot.appendChild(title);
             const fields = fieldConfigFor(selectedNode.nodeType, selectedNode.nodeData);
@@ -285,7 +379,53 @@
                 const label = document.createElement("label");
                 label.textContent = `${field.label}: `;
                 let input;
-                if (field.type === "textarea") {
+                if (field.type === "textarea" && richTextFields.has(field.name)) {
+                    const richWrapper = document.createElement("div");
+                    richWrapper.className = "quill-field";
+
+                    const hiddenInput = document.createElement("textarea");
+                    hiddenInput.name = field.name;
+                    hiddenInput.hidden = true;
+                    hiddenInput.value = field.value || "";
+
+                    const toolbar = document.createElement("div");
+                    toolbar.innerHTML = `
+                        <span class="ql-formats">
+                            <button type="button" class="ql-bold"></button>
+                            <button type="button" class="ql-italic"></button>
+                        </span>
+                        <span class="ql-formats">
+                            <button type="button" class="ql-script" value="sub"></button>
+                            <button type="button" class="ql-script" value="super"></button>
+                        </span>
+                        <span class="ql-formats">
+                            <button type="button" class="ql-link"></button>
+                            <button type="button" class="ql-special-character">Ω+</button>
+                        </span>
+                    `;
+
+                    const editor = document.createElement("div");
+                    editor.className = "quill-editor";
+
+                    richWrapper.appendChild(hiddenInput);
+                    richWrapper.appendChild(toolbar);
+                    richWrapper.appendChild(editor);
+                    label.appendChild(richWrapper);
+                    wrapper.appendChild(label);
+                    fieldsRoot.appendChild(wrapper);
+
+                    const quill = new Quill(editor, {
+                        theme: "snow",
+                        modules: {toolbar: toolbar},
+                    });
+                    quill.root.innerHTML = field.value || "";
+                    registerSpecialCharacterToolbarControl(quill);
+                    quill.on("text-change", () => {
+                        hiddenInput.value = quill.root.innerHTML;
+                    });
+                    quillEditors.set(field.name, {quill, hiddenInput});
+                    return;
+                } else if (field.type === "textarea") {
                     input = document.createElement("textarea");
                     input.rows = 3;
                     input.value = field.value;
@@ -330,6 +470,7 @@
             const form = document.getElementById("tree-editor-form");
             const formData = new FormData(form);
             const payload = new URLSearchParams();
+            syncQuillHiddenFields();
             for (const [key, value] of formData.entries()) {
                 payload.append(key, value);
             }
@@ -501,7 +642,7 @@
                     return;
                 }
                 const payload = await response.json();
-                status.textContent = "Tree loaded.";
+                status.textContent = "";
                 renderTree(payload);
             } catch (error) {
                 status.textContent = "Unable to load tree data.";

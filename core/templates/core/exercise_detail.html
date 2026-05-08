@@ -11,7 +11,7 @@
 
     {% if variant %}
         <div>
-            <p>{{ variant.exercise_text }}</p>
+            <div>{{ variant.exercise_text|safe }}</div>
             {% if variant.image %}
                 <img src="{{ variant.image.url }}" alt="Exercise variant image">
             {% endif %}
@@ -43,7 +43,7 @@
                 <fieldset>
                     <legend>Teil {{ part.label }}</legend>
                     {% if part.prompt_text %}
-                        <p>{{ part.prompt_text }}</p>
+                        <div>{{ part.prompt_text|safe }}</div>
                     {% endif %}
                     {% if part.answer_type == "numerical" %}
                         <label for="numerical_part_{{ part.id }}">

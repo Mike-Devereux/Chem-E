@@ -1197,6 +1197,22 @@ class NumericalAnswerFormViewTests(TestCase):
             10.02,
         )
 
+    def test_assigned_exercise_renders_sanitized_variant_and_part_html(self):
+        variant = ExerciseVariant.objects.get(exercise=self.numerical_exercise)
+        variant.exercise_text = "<p>Intro <strong>bold</strong> <script>alert(1)</script></p>"
+        variant.save(update_fields=["exercise_text"])
+        part = variant.parts.get()
+        part.prompt_text = '<p>Prompt <em>italic</em> <a href="javascript:alert(1)">bad</a></p>'
+        part.save(update_fields=["prompt_text"])
+
+        self.client.force_login(self.student)
+        response = self.client.get(reverse("exercise_detail", args=[self.numerical_exercise.id]))
+
+        self.assertContains(response, "<strong>bold</strong>", html=False)
+        self.assertNotContains(response, "<script>", html=False)
+        self.assertContains(response, "<em>italic</em>", html=False)
+        self.assertNotContains(response, 'href="javascript:alert(1)"', html=False)
+
     def test_upload_exercise_does_not_show_numerical_form(self):
         self.client.force_login(self.student)
         response = self.client.get(reverse("exercise_detail", args=[self.upload_exercise.id]))
@@ -3090,7 +3106,7 @@ class SupervisorLandingAndSummaryListViewTests(TestCase):
         self.client.force_login(self.supervisor_owner)
         response = self.client.get(reverse("supervisor_tree"))
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Primary workflow: single-page tree editor with inline create, edit, and delete.")
+        self.assertContains(response, "Use this editor to create, edit, and delete courses, tutorials, exercises, and parts.")
         self.assertContains(response, 'id="tree-filter-input"')
         self.assertContains(response, 'id="tree-expand-all"')
         self.assertContains(response, 'id="tree-collapse-all"')
@@ -3178,6 +3194,44 @@ class SupervisorLandingAndSummaryListViewTests(TestCase):
         self.part_a.refresh_from_db()
         self.assertAlmostEqual(self.part_a.reference_solution, 1.2345e-6)
         self.assertAlmostEqual(self.part_a.absolute_tolerance, 2.5e-8)
+
+    def test_supervisor_tree_sanitizes_variant_and_part_html(self):
+        self.client.force_login(self.shared_supervisor)
+
+        variant_response = self.client.post(
+            reverse(
+                "supervisor_tree_node_update",
+                kwargs={"node_type": "variant", "node_id": self.variant_a.id},
+            ),
+            {
+                "exercise_text": '<p>Ok <strong>text</strong> <script>alert(1)</script></p>',
+                "supervisor_notes": self.variant_a.supervisor_notes,
+            },
+        )
+        self.assertEqual(variant_response.status_code, 200)
+        self.variant_a.refresh_from_db()
+        self.assertIn("<strong>text</strong>", self.variant_a.exercise_text)
+        self.assertNotIn("<script>", self.variant_a.exercise_text)
+
+        part_response = self.client.post(
+            reverse(
+                "supervisor_tree_node_update",
+                kwargs={"node_type": "part", "node_id": self.part_a.id},
+            ),
+            {
+                "label": self.part_a.label,
+                "prompt_text": '<p>Prompt <em>safe</em> <a href="javascript:alert(1)">bad</a></p>',
+                "answer_type": self.part_a.answer_type,
+                "reference_solution": "1.0",
+                "absolute_tolerance": "0.1",
+                "available_points": str(self.part_a.available_points),
+                "order_index": self.part_a.order_index,
+            },
+        )
+        self.assertEqual(part_response.status_code, 200)
+        self.part_a.refresh_from_db()
+        self.assertIn("<em>safe</em>", self.part_a.prompt_text)
+        self.assertNotIn("javascript:", self.part_a.prompt_text)
 
     def test_student_cannot_update_tree_node(self):
         self.client.force_login(self.student)

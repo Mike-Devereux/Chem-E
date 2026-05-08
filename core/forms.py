@@ -1,6 +1,7 @@
 from django.contrib.auth.forms import UserCreationForm
 from django import forms
 
+from .html_sanitizer import sanitize_rich_text
 from .models import Course, Exercise, ExercisePart, ExerciseVariant, Tutorial, User
 from .numeric_parsing import parse_decimal_value, parse_float_value
 from .validators import validate_student_submission_file
@@ -100,6 +101,9 @@ class ExerciseEditForm(forms.ModelForm):
 
 
 class ExerciseVariantEditForm(forms.ModelForm):
+    def clean_exercise_text(self):
+        return sanitize_rich_text(self.cleaned_data.get("exercise_text", ""))
+
     class Meta:
         model = ExerciseVariant
         fields = (
@@ -149,6 +153,9 @@ class ExercisePartEditForm(forms.ModelForm):
             return parse_float_value(value)
         except ValueError as exc:
             raise forms.ValidationError(str(exc))
+
+    def clean_prompt_text(self):
+        return sanitize_rich_text(self.cleaned_data.get("prompt_text", ""))
 
     class Meta:
         model = ExercisePart

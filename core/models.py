@@ -3,6 +3,7 @@ from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.core.exceptions import ValidationError
 from django.db import models
 
+from .html_sanitizer import sanitize_rich_text
 from .validators import validate_student_submission_file, validate_university_email_domain
 
 
@@ -199,6 +200,10 @@ class ExerciseVariant(models.Model):
         super().clean()
         return
 
+    def save(self, *args, **kwargs):
+        self.exercise_text = sanitize_rich_text(self.exercise_text)
+        super().save(*args, **kwargs)
+
 
 class ArchiveBatch(models.Model):
     course = models.ForeignKey(
@@ -278,6 +283,10 @@ class ExercisePart(models.Model):
 
         if errors:
             raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        self.prompt_text = sanitize_rich_text(self.prompt_text)
+        super().save(*args, **kwargs)
 
 
 class Result(models.Model):
