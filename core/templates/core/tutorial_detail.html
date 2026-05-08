@@ -4,6 +4,11 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ tutorial.title }}</title>
+    <style>
+        .tutorial-footer-gap {
+            margin-bottom: 40px;
+        }
+    </style>
 </head>
 <body>
     <p><a href="{% url 'course_detail' tutorial.course_id %}">Back to course</a></p>
@@ -70,5 +75,6 @@
     {% else %}
         <p>No exercises available for this tutorial.</p>
     {% endif %}
+    <div class="tutorial-footer-gap" aria-hidden="true"></div>
 </body>
 </html>

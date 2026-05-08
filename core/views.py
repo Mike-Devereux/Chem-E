@@ -2,6 +2,7 @@ import random
 import os
 from decimal import Decimal
 
+from django.conf import settings
 from django.contrib.auth import views as auth_views
 from django.contrib.auth import logout as auth_logout
 from django.contrib.auth.mixins import LoginRequiredMixin
@@ -514,6 +515,64 @@ class SupervisorTreeNodeDeleteView(SupervisorRequiredMixin, View):
         deleted_id = part.id
         part.delete()
         return JsonResponse({"ok": True, "node_type": "part", "deleted_id": deleted_id})
+
+
+class SupervisorContentUploadView(SupervisorRequiredMixin, View):
+    def post(self, request):
+        node_type = request.POST.get("node_type")
+        node_id = request.POST.get("node_id")
+        uploaded_file = request.FILES.get("file")
+        if node_type not in {"variant", "part"}:
+            return JsonResponse({"ok": False, "errors": {"node_type": ["Unsupported node type."]}}, status=400)
+        if not node_id:
+            return JsonResponse({"ok": False, "errors": {"node_id": ["Node id is required."]}}, status=400)
+        if not uploaded_file:
+            return JsonResponse({"ok": False, "errors": {"file": ["File is required."]}}, status=400)
+
+        if node_type == "variant":
+            variant = get_object_or_404(ExerciseVariant, pk=node_id)
+            _assert_user_can_manage_course(request.user, variant.exercise.tutorial.course)
+        else:
+            part = get_object_or_404(ExercisePart, pk=node_id)
+            _assert_user_can_manage_course(request.user, part.variant.exercise.tutorial.course)
+
+        original_name = uploaded_file.name or "content-file"
+        storage_name = f"content/{original_name}"
+        if default_storage.exists(storage_name):
+            default_storage.delete(storage_name)
+        stored_name = default_storage.save(storage_name, uploaded_file)
+        file_url = default_storage.url(stored_name)
+        return JsonResponse({"ok": True, "url": file_url, "name": original_name})
+
+
+class SupervisorContentBrowseView(SupervisorRequiredMixin, View):
+    def get(self, request):
+        query = (request.GET.get("q") or "").strip().lower()
+        content_root = os.path.join(settings.MEDIA_ROOT, "content")
+        if not os.path.isdir(content_root):
+            return JsonResponse({"ok": True, "files": []})
+
+        files = []
+        for root, _, filenames in os.walk(content_root):
+            for filename in filenames:
+                if query and query not in filename.lower():
+                    continue
+                absolute_path = os.path.join(root, filename)
+                rel_path = os.path.relpath(absolute_path, content_root).replace(os.sep, "/")
+                storage_path = f"content/{rel_path}"
+                files.append(
+                    {
+                        "name": filename,
+                        "path": storage_path,
+                        "url": default_storage.url(storage_path),
+                        "modified_ts": os.path.getmtime(absolute_path),
+                    }
+                )
+
+        files.sort(key=lambda item: item["modified_ts"], reverse=True)
+        for item in files:
+            item.pop("modified_ts", None)
+        return JsonResponse({"ok": True, "files": files})
 
 
 class SupervisorCourseSummaryListView(SupervisorRequiredMixin, View):

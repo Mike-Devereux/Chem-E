@@ -9,6 +9,21 @@
         .tree-action-link {
             font-size: 12px;
         }
+        .tree-level-course > summary > span {
+            color: #6b0f1a;
+        }
+        .tree-level-tutorial > summary > span {
+            color: #8b1e2d;
+        }
+        .tree-level-exercise > summary > span {
+            color: #ad3a48;
+        }
+        .tree-level-variant > summary > span {
+            color: #c75a66;
+        }
+        .tree-level-part > summary > span {
+            color: #df8a93;
+        }
         .tree-workspace {
             display: flex;
             gap: 24px;
@@ -42,6 +57,40 @@
         .ql-special-character {
             width: auto !important;
             padding: 0 8px;
+            font-size: 12px;
+        }
+        .content-browse-modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.35);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+        }
+        .content-browse-modal.is-open {
+            display: flex;
+        }
+        .content-browse-modal-panel {
+            width: min(700px, 90vw);
+            max-height: 80vh;
+            overflow: auto;
+            background: #fff;
+            border-radius: 6px;
+            padding: 16px;
+            box-sizing: border-box;
+        }
+        .content-browse-list {
+            margin: 12px 0 0;
+            padding-left: 20px;
+        }
+        .content-browse-list li {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 6px;
+        }
+        .content-browse-list button {
             font-size: 12px;
         }
     </style>
@@ -90,6 +139,18 @@
             </form>
         </aside>
     </div>
+    <div id="content-browse-modal" class="content-browse-modal" aria-hidden="true">
+        <div class="content-browse-modal-panel">
+            <h3>Browse uploaded files</h3>
+            <p>
+                <label for="content-browse-query">Search:</label>
+                <input id="content-browse-query" type="text" placeholder="Filter by filename">
+                <button type="button" id="content-browse-search">Search</button>
+                <button type="button" id="content-browse-close">Close</button>
+            </p>
+            <ul id="content-browse-list" class="content-browse-list"></ul>
+        </div>
+    </div>
     <script src="https://cdn.jsdelivr.net/npm/quill@1.3.7/dist/quill.min.js"></script>
     <script>
         const SizeStyle = Quill.import("attributors/style/size");
@@ -103,6 +164,10 @@
         let requestInFlight = false;
         const richTextFields = new Set(["exercise_text", "prompt_text"]);
         const quillEditors = new Map();
+        const contentBrowseModal = document.getElementById("content-browse-modal");
+        const contentBrowseList = document.getElementById("content-browse-list");
+        const contentBrowseQueryInput = document.getElementById("content-browse-query");
+        let contentBrowseTargetQuill = null;
 
         function getCsrfToken() {
             const cookieValue = document.cookie
@@ -273,6 +338,135 @@
             });
         }
 
+        function registerFileLinkToolbarControl(quill) {
+            const toolbar = quill.getModule("toolbar");
+            const button = toolbar.container.querySelector(".ql-link-file");
+            if (!button) {
+                return;
+            }
+            button.addEventListener("click", async () => {
+                if (!selectedNode || !["variant", "part"].includes(selectedNode.nodeType)) {
+                    return;
+                }
+                const proceed = window.confirm(
+                    "Files are stored in media/content using their original filename. Uploading a file with the same name will overwrite the existing file."
+                );
+                if (!proceed) {
+                    return;
+                }
+                const picker = document.createElement("input");
+                picker.type = "file";
+                picker.addEventListener("change", async () => {
+                    const file = picker.files && picker.files[0];
+                    if (!file) {
+                        return;
+                    }
+                    const formData = new FormData();
+                    formData.append("file", file);
+                    formData.append("node_type", selectedNode.nodeType);
+                    formData.append("node_id", String(selectedNode.nodeData.id || ""));
+                    try {
+                        const response = await fetch("{% url 'supervisor_content_upload' %}", {
+                            method: "POST",
+                            headers: {
+                                "X-CSRFToken": getCsrfToken(),
+                                "Accept": "application/json",
+                            },
+                            body: formData,
+                        });
+                        const result = await readJsonOrEmpty(response);
+                        if (!response.ok || !result.ok || !result.url) {
+                            return;
+                        }
+                        const range = quill.getSelection(true);
+                        const insertAt = range ? range.index : quill.getLength();
+                        const linkText = result.name || "Download file";
+                        quill.insertText(insertAt, linkText, "link", result.url);
+                        quill.setSelection(insertAt + linkText.length, 0);
+                    } catch (error) {
+                        // Fail silently and keep current text unchanged.
+                    }
+                });
+                picker.click();
+            });
+        }
+
+        async function fetchContentFiles(queryText) {
+            const params = new URLSearchParams();
+            if (queryText && queryText.trim() !== "") {
+                params.set("q", queryText.trim());
+            }
+            const suffix = params.toString() ? `?${params.toString()}` : "";
+            const response = await fetch(`{% url 'supervisor_content_browse' %}${suffix}`, {
+                headers: {"Accept": "application/json"},
+            });
+            const result = await readJsonOrEmpty(response);
+            if (!response.ok || !result.ok || !Array.isArray(result.files)) {
+                return [];
+            }
+            return result.files;
+        }
+
+        function insertFileLinkIntoEditor(fileMeta) {
+            if (!contentBrowseTargetQuill || !fileMeta || !fileMeta.url) {
+                return;
+            }
+            const range = contentBrowseTargetQuill.getSelection(true);
+            const insertAt = range ? range.index : contentBrowseTargetQuill.getLength();
+            const linkText = fileMeta.name || "Download file";
+            contentBrowseTargetQuill.insertText(insertAt, linkText, "link", fileMeta.url);
+            contentBrowseTargetQuill.setSelection(insertAt + linkText.length, 0);
+        }
+
+        function renderContentBrowseList(files) {
+            contentBrowseList.innerHTML = "";
+            if (!files.length) {
+                const empty = document.createElement("li");
+                empty.textContent = "No files found in media/content.";
+                contentBrowseList.appendChild(empty);
+                return;
+            }
+            files.forEach((fileMeta) => {
+                const row = document.createElement("li");
+                const name = document.createElement("span");
+                name.textContent = fileMeta.name || fileMeta.path || "file";
+                const insertButton = document.createElement("button");
+                insertButton.type = "button";
+                insertButton.textContent = "Insert link";
+                insertButton.addEventListener("click", () => {
+                    insertFileLinkIntoEditor(fileMeta);
+                });
+                row.appendChild(name);
+                row.appendChild(insertButton);
+                contentBrowseList.appendChild(row);
+            });
+        }
+
+        async function openContentBrowseModal(quill) {
+            contentBrowseTargetQuill = quill;
+            contentBrowseQueryInput.value = "";
+            const files = await fetchContentFiles("");
+            renderContentBrowseList(files);
+            contentBrowseModal.classList.add("is-open");
+            contentBrowseModal.setAttribute("aria-hidden", "false");
+        }
+
+        function closeContentBrowseModal() {
+            contentBrowseModal.classList.remove("is-open");
+            contentBrowseModal.setAttribute("aria-hidden", "true");
+        }
+
+        function registerBrowseFilesToolbarControl(quill) {
+            const toolbar = quill.getModule("toolbar");
+            const button = toolbar.container.querySelector(".ql-browse-files");
+            if (!button) {
+                return;
+            }
+            button.addEventListener("click", async () => {
+                await openContentBrowseModal(quill);
+            });
+        }
+
         function syncQuillHiddenFields() {
             quillEditors.forEach(({quill, hiddenInput}) => {
                 hiddenInput.value = quill.root.innerHTML;
@@ -281,6 +475,9 @@
 
         function createNode(label, children, nodeType, nodeId) {
             const details = document.createElement("details");
+            if (nodeType) {
+                details.classList.add(`tree-level-${nodeType}`);
+            }
             if (nodeType && nodeId !== undefined && nodeId !== null) {
                 const key = nodeKey(nodeType, nodeId);
                 details.dataset.nodeKey = key;
@@ -413,6 +610,8 @@
                         </span>
                         <span class="ql-formats">
                             <button type="button" class="ql-link"></button>
+                            <button type="button" class="ql-link-file">File</button>
+                            <button type="button" class="ql-browse-files">Browse</button>
                             <button type="button" class="ql-special-character">Ω+</button>
                         </span>
                     `;
@@ -434,6 +633,8 @@
                     quill.root.innerHTML = field.value || "";
                     quill.format("size", "15px");
                     registerSpecialCharacterToolbarControl(quill);
+                    registerFileLinkToolbarControl(quill);
+                    registerBrowseFilesToolbarControl(quill);
                     quill.on("text-change", () => {
                         hiddenInput.value = quill.root.innerHTML;
                     });
@@ -667,6 +868,16 @@
         document.getElementById("tree-filter-input").addEventListener("input", applyTreeFilter);
         document.getElementById("tree-expand-all").addEventListener("click", () => expandOrCollapseAll(true));
         document.getElementById("tree-collapse-all").addEventListener("click", () => expandOrCollapseAll(false));
+        document.getElementById("content-browse-close").addEventListener("click", closeContentBrowseModal);
+        document.getElementById("content-browse-search").addEventListener("click", async () => {
+            const files = await fetchContentFiles(contentBrowseQueryInput.value);
+            renderContentBrowseList(files);
+        });
+        contentBrowseModal.addEventListener("click", (event) => {
+            if (event.target === contentBrowseModal) {
+                closeContentBrowseModal();
+            }
+        });
         loadExpandedNodes();
         selectedNode = {nodeType: "course", nodeData: {id: null}, parentType: null, parentId: null};
         editorMode = "create";

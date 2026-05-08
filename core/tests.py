@@ -9,6 +9,7 @@ from django.test import RequestFactory, TestCase, override_settings
 from django.urls import path, reverse
 from django.views import View
 import os
+import shutil
 import tempfile
 
 from .access import (
@@ -3249,6 +3250,115 @@ class SupervisorLandingAndSummaryListViewTests(TestCase):
         self.part_a.refresh_from_db()
         self.assertIn("<em>safe</em>", self.part_a.prompt_text)
         self.assertNotIn("javascript:", self.part_a.prompt_text)
+
+    def test_supervisor_can_upload_content_file_for_variant(self):
+        media_dir = tempfile.mkdtemp()
+        try:
+            with self.settings(MEDIA_ROOT=media_dir):
+                self.client.force_login(self.shared_supervisor)
+                response = self.client.post(
+                    reverse("supervisor_content_upload"),
+                    {
+                        "node_type": "variant",
+                        "node_id": str(self.variant_a.id),
+                        "file": SimpleUploadedFile("ref-sheet.pdf", b"pdf-data"),
+                    },
+                )
+                self.assertEqual(response.status_code, 200)
+                payload = response.json()
+                self.assertTrue(payload["ok"])
+                self.assertTrue(payload["url"].endswith("/media/content/ref-sheet.pdf"))
+                self.assertEqual(payload["name"], "ref-sheet.pdf")
+        finally:
+            shutil.rmtree(media_dir)
+
+    def test_supervisor_content_upload_overwrites_same_filename(self):
+        media_dir = tempfile.mkdtemp()
+        try:
+            with self.settings(MEDIA_ROOT=media_dir):
+                self.client.force_login(self.shared_supervisor)
+                first_response = self.client.post(
+                    reverse("supervisor_content_upload"),
+                    {
+                        "node_type": "variant",
+                        "node_id": str(self.variant_a.id),
+                        "file": SimpleUploadedFile("overwrite.txt", b"first"),
+                    },
+                )
+                self.assertEqual(first_response.status_code, 200)
+                second_response = self.client.post(
+                    reverse("supervisor_content_upload"),
+                    {
+                        "node_type": "variant",
+                        "node_id": str(self.variant_a.id),
+                        "file": SimpleUploadedFile("overwrite.txt", b"second"),
+                    },
+                )
+                self.assertEqual(second_response.status_code, 200)
+                stored_path = os.path.join(media_dir, "content", "overwrite.txt")
+                with open(stored_path, "rb") as file_obj:
+                    self.assertEqual(file_obj.read(), b"second")
+        finally:
+            shutil.rmtree(media_dir)
+
+    def test_supervisor_cannot_upload_content_file_for_unrelated_node(self):
+        tutorial_b = Tutorial.objects.create(
+            course=self.course_b,
+            title="Unrelated Tutorial",
+            order_index=2,
+        )
+        exercise_b = Exercise.objects.create(
+            tutorial=tutorial_b,
+            title="Unrelated Exercise",
+            order_index=1,
+            is_active=True,
+        )
+        variant_b = ExerciseVariant.objects.create(
+            exercise=exercise_b,
+            exercise_text="Unrelated variant",
+        )
+        self.client.force_login(self.shared_supervisor)
+        response = self.client.post(
+            reverse("supervisor_content_upload"),
+            {
+                "node_type": "variant",
+                "node_id": str(variant_b.id),
+                "file": SimpleUploadedFile("blocked.pdf", b"pdf-data"),
+            },
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_supervisor_can_browse_content_folder_files_only(self):
+        media_dir = tempfile.mkdtemp()
+        try:
+            content_dir = os.path.join(media_dir, "content")
+            other_dir = os.path.join(media_dir, "other")
+            os.makedirs(os.path.join(content_dir, "nested"), exist_ok=True)
+            os.makedirs(other_dir, exist_ok=True)
+            with open(os.path.join(content_dir, "guide.pdf"), "wb") as file_obj:
+                file_obj.write(b"guide")
+            with open(os.path.join(content_dir, "nested", "table.csv"), "wb") as file_obj:
+                file_obj.write(b"table")
+            with open(os.path.join(other_dir, "ignore.txt"), "wb") as file_obj:
+                file_obj.write(b"ignore")
+
+            with self.settings(MEDIA_ROOT=media_dir):
+                self.client.force_login(self.shared_supervisor)
+                response = self.client.get(reverse("supervisor_content_browse"))
+                self.assertEqual(response.status_code, 200)
+                payload = response.json()
+                self.assertTrue(payload["ok"])
+                urls = [item["url"] for item in payload["files"]]
+                self.assertTrue(any("/media/content/guide.pdf" in url for url in urls))
+                self.assertTrue(any("/media/content/nested/table.csv" in url for url in urls))
+                self.assertFalse(any("/media/other/ignore.txt" in url for url in urls))
+        finally:
+            shutil.rmtree(media_dir)
+
+    def test_student_cannot_browse_content_folder_files(self):
+        self.client.force_login(self.student)
+        response = self.client.get(reverse("supervisor_content_browse"))
+        self.assertEqual(response.status_code, 403)
 
     def test_student_cannot_update_tree_node(self):
         self.client.force_login(self.student)
