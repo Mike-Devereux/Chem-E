@@ -14,28 +14,59 @@
 
     <h2>Exercises</h2>
     {% if exercises %}
-        <ul>
-            {% if request.user.role == "student" %}
-                {% for row in exercise_rows %}
-                    <li>
-                        <a href="{% url 'student_assigned_exercise_detail' row.exercise.pk %}">{{ row.exercise.title }}</a>
-                        {% if row.status == "completed" %}
-                            - Completed ({{ row.score_display }} / {{ row.total_display }})
-                        {% elif row.status == "pending_grading" %}
-                            - Pending grading ({{ row.score_display }} / {{ row.total_display }})
-                        {% else %}
-                            - Not completed ({{ row.score_display }} / {{ row.total_display }})
-                        {% endif %}
-                    </li>
-                {% endfor %}
-            {% else %}
-                {% for exercise in exercises %}
-                    <li>
-                        <a href="{% url 'student_assigned_exercise_detail' exercise.pk %}">{{ exercise.title }}</a>
-                    </li>
-                {% endfor %}
-            {% endif %}
-        </ul>
+        {% for row in exercise_rows %}
+            <section>
+                <h3>
+                    {{ row.exercise.title }}
+                    {% if row.status == "completed" %}
+                        - Completed ({{ row.score_display }} / {{ row.total_display }})
+                    {% elif row.status == "pending_grading" %}
+                        - Pending grading ({{ row.score_display }} / {{ row.total_display }})
+                    {% else %}
+                        - Not completed ({{ row.score_display }} / {{ row.total_display }})
+                    {% endif %}
+                </h3>
+
+                {% if row.variant %}
+                    <div>{{ row.variant.exercise_text|safe }}</div>
+                    {% if row.variant.image %}
+                        <img src="{{ row.variant.image.url }}" alt="Exercise variant image">
+                    {% endif %}
+                {% else %}
+                    <p>No exercise variant available yet.</p>
+                {% endif %}
+
+                {% if row.parts %}
+                    <form method="post" enctype="multipart/form-data" action="{% url 'exercise_detail' row.exercise.pk %}">
+                        {% csrf_token %}
+                        {% for part in row.parts %}
+                            <fieldset>
+                                <legend>Teil {{ part.label }}</legend>
+                                {% if part.prompt_text %}
+                                    <div>{{ part.prompt_text|safe }}</div>
+                                {% endif %}
+                                {% if part.answer_type == "numerical" %}
+                                    <label for="numerical_part_{{ part.id }}">
+                                        Lösung{% if part.display_tolerance != "0" %} (Präzision +/- {{ part.display_tolerance }}){% endif %}
+                                    </label>
+                                    <input id="numerical_part_{{ part.id }}" name="numerical_part_{{ part.id }}" type="text" value="{{ part.prefill_numerical_value|default_if_none:'' }}">
+                                    {% if part.points_display %}
+                                        <span>{{ part.points_display }}</span>
+                                    {% endif %}
+                                {% elif part.answer_type == "document_upload" %}
+                                    <label for="upload_part_{{ part.id }}">Upload solution file</label>
+                                    <input id="upload_part_{{ part.id }}" name="upload_part_{{ part.id }}" type="file">
+                                    {% if part.points_display %}
+                                        <span>{{ part.points_display }}</span>
+                                    {% endif %}
+                                {% endif %}
+                            </fieldset>
+                        {% endfor %}
+                        <button type="submit">Submit</button>
+                    </form>
+                {% endif %}
+            </section>
+        {% endfor %}
     {% else %}
         <p>No exercises available for this tutorial.</p>
     {% endif %}

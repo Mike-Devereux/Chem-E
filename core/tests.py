@@ -999,20 +999,20 @@ class ExerciseVariantAssignmentTests(TestCase):
             1,
         )
 
-    def test_tutorial_page_links_to_student_assigned_exercise_route(self):
+    def test_tutorial_page_uses_standard_exercise_route(self):
         self.client.force_login(self.student)
         response = self.client.get(reverse("tutorial_detail", args=[self.tutorial.id]))
         self.assertEqual(response.status_code, 200)
         self.assertContains(
             response,
-            reverse("student_assigned_exercise_detail", args=[self.exercise.id]),
+            reverse("exercise_detail", args=[self.exercise.id]),
         )
 
     def test_tutorial_page_shows_not_completed_status_and_score_before_submission(self):
         self.client.force_login(self.student)
         response = self.client.get(reverse("tutorial_detail", args=[self.tutorial.id]))
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Not completed (0 / 2)")
+        self.assertContains(response, "Not completed (0 / 1)")
 
     def test_tutorial_page_shows_completed_status_and_score_after_submission(self):
         self.client.force_login(self.student)
@@ -1035,7 +1035,7 @@ class ExerciseVariantAssignmentTests(TestCase):
         )
         response = self.client.get(reverse("tutorial_detail", args=[self.tutorial.id]))
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Completed (1 / 2)")
+        self.assertContains(response, "Completed (1 / 1)")
 
     def test_tutorial_page_shows_pending_grading_for_ungraded_upload_submission(self):
         upload_exercise = Exercise.objects.create(
@@ -1076,6 +1076,13 @@ class ExerciseVariantAssignmentTests(TestCase):
         response = self.client.get(reverse("tutorial_detail", args=[self.tutorial.id]))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Pending grading (0 / 3)")
+
+    def test_tutorial_page_total_uses_assigned_variant_parts_only(self):
+        self.client.force_login(self.student)
+        response = self.client.get(reverse("tutorial_detail", args=[self.tutorial.id]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Not completed (0 / 1)")
+        self.assertNotContains(response, "Not completed (0 / 2)")
 
     def test_tutorial_page_shows_zero_points_as_zero_not_blank(self):
         zero_points_exercise = Exercise.objects.create(
@@ -3070,6 +3077,8 @@ class SupervisorLandingAndSummaryListViewTests(TestCase):
             label="a",
             prompt_text="Landing part prompt",
             answer_type=ExerciseVariant.PartAnswerType.NUMERICAL,
+            reference_solution="12.5",
+            absolute_tolerance="0.05",
             available_points="1.00",
             order_index=1,
         )
@@ -3149,6 +3158,14 @@ class SupervisorLandingAndSummaryListViewTests(TestCase):
         self.assertEqual(
             course_node["tutorials"][0]["exercises"][0]["variants"][0]["parts"][0]["label"],
             "a",
+        )
+        self.assertEqual(
+            course_node["tutorials"][0]["exercises"][0]["variants"][0]["parts"][0]["reference_solution"],
+            "12.5",
+        )
+        self.assertEqual(
+            course_node["tutorials"][0]["exercises"][0]["variants"][0]["parts"][0]["absolute_tolerance"],
+            "0.05",
         )
 
     def test_supervisor_can_update_accessible_tutorial_via_tree_endpoint(self):

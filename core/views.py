@@ -111,12 +111,42 @@ def _next_order_index(queryset):
     return (highest or 0) + 1
 
 
+def _get_or_assign_student_result_for_exercise(student, exercise):
+    variants = list(exercise.variants.order_by("id"))
+    if not variants:
+        return None
+    try:
+        result, _ = Result.objects.get_or_create(
+            student=student,
+            exercise=exercise,
+            is_archived=False,
+            defaults={
+                "course": exercise.tutorial.course,
+                "tutorial": exercise.tutorial,
+                "assigned_variant": random.choice(variants),
+            },
+        )
+    except IntegrityError:
+        result = Result.objects.get(
+            student=student,
+            exercise=exercise,
+            is_archived=False,
+        )
+    return result
+
+
 def _serialize_part_node(part):
     return {
         "id": part.id,
         "label": part.label,
         "prompt_text": part.prompt_text,
         "answer_type": part.answer_type,
+        "reference_solution": (
+            "" if part.reference_solution is None else str(part.reference_solution)
+        ),
+        "absolute_tolerance": (
+            "" if part.absolute_tolerance is None else str(part.absolute_tolerance)
+        ),
         "order_index": part.order_index,
         "available_points": str(part.available_points),
     }
@@ -521,29 +551,53 @@ class TutorialDetailView(LoginRequiredMixin, DetailView):
         )
         context["exercises"] = exercises
 
-        if self.request.user.role != User.Role.STUDENT:
-            return context
-
         exercise_ids = [exercise.id for exercise in exercises]
-        totals_by_exercise_id = {
-            row["variant__exercise_id"]: row["total_points"] or Decimal("0.00")
-            for row in ExercisePart.objects.filter(variant__exercise_id__in=exercise_ids)
-            .values("variant__exercise_id")
-            .annotate(total_points=Sum("available_points"))
-        }
-        results_by_exercise_id = {
-            result.exercise_id: result
-            for result in Result.objects.filter(
-                student=self.request.user,
-                exercise_id__in=exercise_ids,
-                is_archived=False,
-            ).prefetch_related("parts")
-        }
+        is_student = self.request.user.role == User.Role.STUDENT
+        results_by_exercise_id = {}
+        if is_student:
+            results_by_exercise_id = {
+                result.exercise_id: result
+                for result in Result.objects.filter(
+                    student=self.request.user,
+                    exercise_id__in=exercise_ids,
+                    is_archived=False,
+                ).prefetch_related("parts")
+            }
 
         exercise_rows = []
         for exercise in exercises:
-            total_points = totals_by_exercise_id.get(exercise.id, Decimal("0.00"))
             result = results_by_exercise_id.get(exercise.id)
+            if is_student and result is None:
+                result = _get_or_assign_student_result_for_exercise(self.request.user, exercise)
+                if result:
+                    results_by_exercise_id[exercise.id] = result
+            variant = result.assigned_variant if result else exercise.variants.order_by("id").first()
+            parts = list(variant.parts.order_by("order_index", "id")) if variant else []
+            total_points = sum((part.available_points for part in parts), Decimal("0.00"))
+            existing_parts_by_exercise_part_id = {}
+            if result:
+                existing_parts_by_exercise_part_id = {
+                    result_part.exercise_part_id: result_part
+                    for result_part in result.parts.select_related("exercise_part")
+                }
+            for part in parts:
+                if part.absolute_tolerance is None:
+                    part.display_tolerance = ""
+                else:
+                    part.display_tolerance = _format_decimal_compact(part.absolute_tolerance)
+                part.saved_result_part = existing_parts_by_exercise_part_id.get(part.id)
+                part.prefill_numerical_value = (
+                    _format_decimal_compact(part.saved_result_part.submitted_numerical_value)
+                    if part.saved_result_part
+                    else None
+                )
+                if part.saved_result_part:
+                    part.points_display = (
+                        f"Punkte: {_format_decimal_compact(part.saved_result_part.score)}"
+                        f" / {_format_decimal_compact(part.available_points)}"
+                    )
+                else:
+                    part.points_display = ""
             has_submission = bool(
                 result
                 and any(
@@ -569,6 +623,16 @@ class TutorialDetailView(LoginRequiredMixin, DetailView):
             exercise_rows.append(
                 {
                     "exercise": exercise,
+                    "variant": variant,
+                    "parts": parts,
+                    "has_numerical_parts": any(
+                        part.answer_type == ExerciseVariant.PartAnswerType.NUMERICAL
+                        for part in parts
+                    ),
+                    "has_upload_parts": any(
+                        part.answer_type == ExerciseVariant.PartAnswerType.DOCUMENT_UPLOAD
+                        for part in parts
+                    ),
                     "status": status,
                     "score_display": _format_decimal_compact(score),
                     "total_display": _format_decimal_compact(total_points),
