@@ -236,8 +236,8 @@ class ExercisePart(models.Model):
         choices=ExerciseVariant.PartAnswerType.choices,
         default=ExerciseVariant.PartAnswerType.NUMERICAL,
     )
-    reference_solution = models.DecimalField(max_digits=12, decimal_places=4, blank=True, null=True)
-    absolute_tolerance = models.DecimalField(max_digits=12, decimal_places=4, blank=True, null=True)
+    reference_solution = models.FloatField(blank=True, null=True)
+    absolute_tolerance = models.FloatField(blank=True, null=True)
     available_points = models.DecimalField(max_digits=8, decimal_places=2, default=1)
     order_index = models.PositiveIntegerField(default=1)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -352,15 +352,15 @@ class ResultPart(models.Model):
         on_delete=models.PROTECT,
         related_name="result_parts",
     )
-    submitted_numerical_value = models.DecimalField(max_digits=12, decimal_places=4, blank=True, null=True)
+    submitted_numerical_value = models.FloatField(blank=True, null=True)
     uploaded_file = models.FileField(
         upload_to="student_submissions/",
         blank=True,
         null=True,
         validators=[validate_student_submission_file],
     )
-    reference_value_used = models.DecimalField(max_digits=12, decimal_places=4, blank=True, null=True)
-    tolerance_used = models.DecimalField(max_digits=12, decimal_places=4, blank=True, null=True)
+    reference_value_used = models.FloatField(blank=True, null=True)
+    tolerance_used = models.FloatField(blank=True, null=True)
     is_correct = models.BooleanField(blank=True, null=True)
     score = models.DecimalField(max_digits=8, decimal_places=2, default=0)
     is_manually_graded = models.BooleanField(default=False)

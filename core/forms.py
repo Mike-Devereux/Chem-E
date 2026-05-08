@@ -2,6 +2,7 @@ from django.contrib.auth.forms import UserCreationForm
 from django import forms
 
 from .models import Course, Exercise, ExercisePart, ExerciseVariant, Tutorial, User
+from .numeric_parsing import parse_decimal_value, parse_float_value
 from .validators import validate_student_submission_file
 
 
@@ -12,11 +13,15 @@ class RegistrationForm(UserCreationForm):
 
 
 class NumericalAnswerForm(forms.Form):
-    submitted_value = forms.DecimalField(
+    submitted_value = forms.CharField(
         label="Your numerical answer",
-        decimal_places=4,
-        max_digits=12,
     )
+
+    def clean_submitted_value(self):
+        try:
+            return parse_decimal_value(self.cleaned_data["submitted_value"])
+        except ValueError as exc:
+            raise forms.ValidationError(str(exc))
 
 
 class UploadSubmissionForm(forms.Form):
@@ -105,6 +110,9 @@ class ExerciseVariantEditForm(forms.ModelForm):
 
 
 class ExercisePartEditForm(forms.ModelForm):
+    reference_solution = forms.CharField(required=False)
+    absolute_tolerance = forms.CharField(required=False)
+
     def __init__(self, *args, **kwargs):
         self.variant = kwargs.pop("variant", None)
         super().__init__(*args, **kwargs)
@@ -123,6 +131,24 @@ class ExercisePartEditForm(forms.ModelForm):
                 "This order index is already used in this variant."
             )
         return order_index
+
+    def clean_reference_solution(self):
+        value = self.cleaned_data.get("reference_solution")
+        if value in (None, ""):
+            return None
+        try:
+            return parse_float_value(value)
+        except ValueError as exc:
+            raise forms.ValidationError(str(exc))
+
+    def clean_absolute_tolerance(self):
+        value = self.cleaned_data.get("absolute_tolerance")
+        if value in (None, ""):
+            return None
+        try:
+            return parse_float_value(value)
+        except ValueError as exc:
+            raise forms.ValidationError(str(exc))
 
     class Meta:
         model = ExercisePart

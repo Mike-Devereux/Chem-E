@@ -129,10 +129,6 @@ An exercise has:
 * tutorial ID;
 * title;
 * ordering/index within the tutorial;
-* exercise type:
-
-  * numerical answer; or
-  * document upload;
 * active status;
 * lock status;
 * creation timestamp;
@@ -161,8 +157,8 @@ Each part has:
 * ordering within the variant;
 * prompt text;
 * answer type (numerical or document upload);
-* reference solution (if numerical);
-* tolerance (if numerical);
+* reference solution (if numerical, double precision);
+* tolerance (if numerical, double precision);
 * available points;
 
 The total score for an ExerciseVariant is the sum of the points of its parts.
@@ -295,13 +291,13 @@ Each student submission creates or updates a result record.
 Each Result consists of one or more ResultParts.
 
 Each ResultPart corresponds to one ExercisePart and stores:
-* submitted value;
+* submitted value (double precision);
 * correctness;
 * score;
 * submission timestamp;
 * uploaded file reference, if applicable;
-* reference value used;
-* tolerance used;
+* reference value used (double precision);
+* tolerance used (double precision);
 * manual grading status;
 * graded timestamp;
 * feedback, optional;

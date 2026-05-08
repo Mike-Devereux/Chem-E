@@ -1180,6 +1180,23 @@ class NumericalAnswerFormViewTests(TestCase):
             "Enter a number.",
         )
 
+    def test_numerical_exercise_accepts_fortran_notation(self):
+        self.client.force_login(self.student)
+        response = self.client.post(
+            reverse("exercise_detail", args=[self.numerical_exercise.id]),
+            {"submitted_value": "1.002d1"},
+        )
+        self.assertEqual(response.status_code, 200)
+        result = Result.objects.get(
+            student=self.student,
+            exercise=self.numerical_exercise,
+            is_archived=False,
+        )
+        self.assertAlmostEqual(
+            float(_primary_result_part(result).submitted_numerical_value),
+            10.02,
+        )
+
     def test_upload_exercise_does_not_show_numerical_form(self):
         self.client.force_login(self.student)
         response = self.client.get(reverse("exercise_detail", args=[self.upload_exercise.id]))
@@ -1202,7 +1219,7 @@ class NumericalAnswerFormViewTests(TestCase):
             is_archived=False,
         )
         result_part = _primary_result_part(result)
-        self.assertEqual(str(result_part.submitted_numerical_value), "10.0200")
+        self.assertAlmostEqual(float(result_part.submitted_numerical_value), 10.02)
         self.assertTrue(result.is_correct)
         self.assertEqual(str(result.score), "2.00")
         self.assertIsNotNone(result.submitted_at)
@@ -1244,7 +1261,7 @@ class NumericalAnswerFormViewTests(TestCase):
         self.assertEqual(first_result.id, second_result.id)
         self.assertEqual(first_result.assigned_variant_id, second_result.assigned_variant_id)
         second_result_part = _primary_result_part(second_result)
-        self.assertEqual(str(second_result_part.submitted_numerical_value), "10.0000")
+        self.assertAlmostEqual(float(second_result_part.submitted_numerical_value), 10.0)
         self.assertTrue(second_result.is_correct)
         self.assertEqual(str(second_result.score), "2.00")
         self.assertTrue(second_result_part.is_manually_graded)
@@ -1412,6 +1429,24 @@ class NumericalCheckingTests(TestCase):
                 submitted_value="10.10",
                 reference_solution="10.00",
                 absolute_tolerance="0.05",
+            )
+        )
+
+    def test_float_inputs_can_match_with_small_tolerance(self):
+        self.assertTrue(
+            is_numerical_answer_correct(
+                submitted_value=0.1 + 0.2,
+                reference_solution=0.3,
+                absolute_tolerance=1e-15,
+            )
+        )
+
+    def test_float_inputs_respect_tolerance_boundaries(self):
+        self.assertFalse(
+            is_numerical_answer_correct(
+                submitted_value=1.00011,
+                reference_solution=1.0,
+                absolute_tolerance=0.0001,
             )
         )
 
@@ -1628,7 +1663,7 @@ class SupervisorExerciseSubmissionsViewTests(TestCase):
         self.assertContains(response, "Awarded points")
         self.assertContains(response, "Available points")
         self.assertContains(response, "Teil a")
-        self.assertContains(response, "1.0000")
+        self.assertContains(response, ">1<")
         self.assertNotContains(response, "Correctness")
         self.assertContains(response, "Score:")
 
@@ -2861,9 +2896,9 @@ class SupervisorCourseArchiveResultsViewTests(TestCase):
         self.assertEqual(_primary_result_part(self.current_result).uploaded_file.name, original_uploaded_name)
         self.assertEqual(str(self.current_numerical_result.score), original_score)
         self.assertEqual(self.current_numerical_result.submitted_at, original_submitted_at)
-        self.assertEqual(
-            str(_primary_result_part(self.current_numerical_result).submitted_numerical_value),
-            "2.0000",
+        self.assertAlmostEqual(
+            float(_primary_result_part(self.current_numerical_result).submitted_numerical_value),
+            2.0,
         )
 
     def test_archived_file_download_is_course_access_controlled(self):
@@ -3120,6 +3155,29 @@ class SupervisorLandingAndSummaryListViewTests(TestCase):
         self.assertEqual(payload["node_type"], "tutorial")
         self.tutorial_a.refresh_from_db()
         self.assertEqual(self.tutorial_a.title, "Landing Tutorial A Updated")
+
+    def test_supervisor_tree_accepts_fortran_notation_for_part_numerics(self):
+        self.client.force_login(self.shared_supervisor)
+        response = self.client.post(
+            reverse(
+                "supervisor_tree_node_update",
+                kwargs={"node_type": "part", "node_id": self.part_a.id},
+            ),
+            {
+                "label": self.part_a.label,
+                "prompt_text": self.part_a.prompt_text,
+                "reference_solution": "1.2345d-6",
+                "absolute_tolerance": "2.5d-8",
+                "available_points": str(self.part_a.available_points),
+                "order_index": self.part_a.order_index,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.part_a.refresh_from_db()
+        self.assertAlmostEqual(self.part_a.reference_solution, 1.2345e-6)
+        self.assertAlmostEqual(self.part_a.absolute_tolerance, 2.5e-8)
 
     def test_student_cannot_update_tree_node(self):
         self.client.force_login(self.student)

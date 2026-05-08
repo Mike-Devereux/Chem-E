@@ -40,6 +40,7 @@ from .models import (
     Tutorial,
     User,
 )
+from .numeric_parsing import parse_decimal_value
 
 
 def _result_has_submission_data(result):
@@ -67,6 +68,8 @@ def _result_display_is_graded(result):
 def _format_decimal_compact(value):
     if value is None:
         return ""
+    if not isinstance(value, Decimal):
+        value = Decimal(str(value))
     normalized = value.normalize()
     rendered = format(normalized, "f")
     if "." in rendered:
@@ -308,13 +311,15 @@ class SupervisorTreeNodeUpdateView(SupervisorRequiredMixin, View):
             "label": request.POST.get("label", part.label),
             "prompt_text": request.POST.get("prompt_text", part.prompt_text),
             "answer_type": part.answer_type,
-            "reference_solution": (
-                "" if part.reference_solution is None else str(part.reference_solution)
+            "reference_solution": request.POST.get(
+                "reference_solution",
+                "" if part.reference_solution is None else str(part.reference_solution),
             ),
-            "absolute_tolerance": (
-                "" if part.absolute_tolerance is None else str(part.absolute_tolerance)
+            "absolute_tolerance": request.POST.get(
+                "absolute_tolerance",
+                "" if part.absolute_tolerance is None else str(part.absolute_tolerance),
             ),
-            "available_points": str(part.available_points),
+            "available_points": request.POST.get("available_points", str(part.available_points)),
             "order_index": request.POST.get("order_index", str(part.order_index)),
         }
         form = ExercisePartEditForm(part_data, instance=part, variant=part.variant)
@@ -696,8 +701,8 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
                     if raw_value == "":
                         continue
                     try:
-                        submitted_value = Decimal(raw_value)
-                    except Exception:
+                        submitted_value = parse_decimal_value(raw_value)
+                    except ValueError:
                         submission_errors.append(
                             f"Part {part.label}: enter a valid numerical value."
                         )
@@ -986,7 +991,7 @@ class SupervisorSubmissionDetailView(SupervisorRequiredMixin, DetailView):
         for part_result in part_results:
             submitted_value = "-"
             if part_result.submitted_numerical_value is not None:
-                submitted_value = str(part_result.submitted_numerical_value)
+                submitted_value = _format_decimal_compact(part_result.submitted_numerical_value)
             elif part_result.uploaded_file:
                 submitted_value = part_result.uploaded_file.name
 
@@ -999,8 +1004,16 @@ class SupervisorSubmissionDetailView(SupervisorRequiredMixin, DetailView):
                         if part_result.uploaded_file
                         else ""
                     ),
-                    "reference_solution": part_result.reference_value_used or "-",
-                    "tolerance": part_result.tolerance_used or "-",
+                    "reference_solution": (
+                        _format_decimal_compact(part_result.reference_value_used)
+                        if part_result.reference_value_used is not None
+                        else "-"
+                    ),
+                    "tolerance": (
+                        _format_decimal_compact(part_result.tolerance_used)
+                        if part_result.tolerance_used is not None
+                        else "-"
+                    ),
                     "awarded_points": part_result.score,
                     "available_points": part_result.exercise_part.available_points,
                 }
