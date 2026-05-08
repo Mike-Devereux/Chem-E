@@ -54,8 +54,19 @@
         .quill-editor .ql-editor {
             font-size: 15px;
         }
+        .quill-field .ql-toolbar {
+            width: 430px;
+            box-sizing: border-box;
+        }
         .ql-special-character {
             width: auto !important;
+            padding: 0 8px;
+            font-size: 12px;
+        }
+        .ql-link-file,
+        .ql-browse-files {
+            width: auto !important;
+            min-width: 54px;
             padding: 0 8px;
             font-size: 12px;
         }
@@ -96,7 +107,7 @@
     </style>
 </head>
 <body>
-    <p><a href="{% url 'supervisor_landing' %}">Back to supervisor landing</a></p>
+    <p><a href="{% url 'supervisor_landing' %}">Back to supervisor home</a></p>
     <h1>Course editor</h1>
     <p>Use this editor to create, edit, and delete courses, tutorials, exercises, and parts.</p>
     <ul>
@@ -113,8 +124,8 @@
     </ul>
     <p>
         For numerical answer exercises, the student will enter a numerical answer.
-        For document upload exercises, the student will upload a document.
-        The student will be able to submit the answer multiple times.
+        For document upload exercises, the student will upload a document.<br>
+        The student will be able to submit the answer multiple times.<br>
         The student will be able to see the result of the exercise after submission.
     </p>
     <h2>Course Tree</h2>

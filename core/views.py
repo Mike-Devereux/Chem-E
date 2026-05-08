@@ -12,6 +12,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import Count, Q, Sum
 from django.http import FileResponse, Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils import timezone
 from django.urls import reverse_lazy
 from django.views import View
@@ -594,7 +595,56 @@ class CourseDetailView(LoginRequiredMixin, DetailView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context["tutorials"] = self.object.tutorials.order_by("order_index", "id")
+        tutorials = list(self.object.tutorials.order_by("order_index", "id"))
+        context["tutorials"] = tutorials
+        if self.request.user.role != User.Role.STUDENT:
+            return context
+
+        tutorial_ids = [tutorial.id for tutorial in tutorials]
+        possible_points_by_tutorial = {tutorial.id: Decimal("0.00") for tutorial in tutorials}
+        assigned_variant_ids = Result.objects.filter(
+            student=self.request.user,
+            course=self.object,
+            tutorial_id__in=tutorial_ids,
+            is_archived=False,
+            assigned_variant__isnull=False,
+        ).values("assigned_variant_id")
+        parts_by_tutorial = (
+            ExercisePart.objects.filter(
+                variant_id__in=assigned_variant_ids,
+            )
+            .values("variant__exercise__tutorial_id")
+            .annotate(total_points=Sum("available_points"))
+        )
+        for row in parts_by_tutorial:
+            tutorial_id = row["variant__exercise__tutorial_id"]
+            possible_points_by_tutorial[tutorial_id] = row["total_points"] or Decimal("0.00")
+        score_by_tutorial = {
+            row["tutorial_id"]: row["total_score"] or Decimal("0.00")
+            for row in Result.objects.filter(
+                student=self.request.user,
+                course=self.object,
+                tutorial_id__in=tutorial_ids,
+                is_archived=False,
+            )
+            .values("tutorial_id")
+            .annotate(total_score=Sum("score"))
+        }
+
+        tutorial_rows = []
+        for tutorial in tutorials:
+            achieved = score_by_tutorial.get(tutorial.id, Decimal("0.00"))
+            possible = possible_points_by_tutorial.get(tutorial.id, Decimal("0.00"))
+            is_completed = achieved > Decimal("0.00")
+            tutorial_rows.append(
+                {
+                    "tutorial": tutorial,
+                    "is_completed": is_completed,
+                    "achieved_display": _format_decimal_compact(achieved),
+                    "possible_display": _format_decimal_compact(possible),
+                }
+            )
+        context["tutorial_rows"] = tutorial_rows
         return context
 
 
@@ -795,6 +845,18 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
             )
         return result
 
+    def _redirect_after_success(self, request):
+        next_url = request.POST.get("next", "").strip()
+        if not next_url:
+            return None
+        if url_has_allowed_host_and_scheme(
+            url=next_url,
+            allowed_hosts={request.get_host()},
+            require_https=request.is_secure(),
+        ):
+            return redirect(next_url)
+        return None
+
     def post(self, request, *args, **kwargs):
         self.object = self.get_object()
         result = self._get_or_assign_student_result() if self.request.user.role == User.Role.STUDENT else None
@@ -817,6 +879,7 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
             submission_errors = []
             numerical_correct_flags = []
             has_saved_part_submission = False
+            force_replace_graded_upload = request.POST.get("force_replace_graded_upload") == "1"
 
             for part in parts:
                 if part.answer_type == ExerciseVariant.PartAnswerType.NUMERICAL:
@@ -870,18 +933,32 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
                         result=result,
                         exercise_part=part,
                     ).first()
-                    if upload_result_part and upload_result_part.is_manually_graded:
+                    if (
+                        upload_result_part
+                        and upload_result_part.is_manually_graded
+                        and not force_replace_graded_upload
+                    ):
                         submission_errors.append(
-                            f"Part {part.label}: this upload has already been manually graded and cannot be replaced."
+                            f"Part {part.label}: Do you really want to upload a new file? Any existing file and any existing grade will be overwritten!"
                         )
                         continue
+                    if upload_result_part and upload_result_part.is_manually_graded:
+                        old_graded_file_name = (
+                            upload_result_part.uploaded_file.name
+                            if upload_result_part.uploaded_file
+                            else None
+                        )
+                        upload_result_part.delete()
+                        if old_graded_file_name and default_storage.exists(old_graded_file_name):
+                            default_storage.delete(old_graded_file_name)
+                        upload_result_part = None
                     has_saved_part_submission = True
                     old_file_name = (
                         upload_result_part.uploaded_file.name
                         if upload_result_part and upload_result_part.uploaded_file
                         else None
                     )
-                    ResultPart.objects.update_or_create(
+                    updated_upload_part, _ = ResultPart.objects.update_or_create(
                         result=result,
                         exercise_part=part,
                         defaults={
@@ -897,6 +974,8 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
                             "graded_by": None,
                         },
                     )
+                    updated_upload_part.submitted_at = timezone.now()
+                    updated_upload_part.save(update_fields=["submitted_at"])
                     new_upload_result_part = ResultPart.objects.get(
                         result=result,
                         exercise_part=part,
@@ -922,6 +1001,9 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
                 result.save(update_fields=["submitted_at", "is_correct"])
                 result.recompute_total_score()
                 result.save(update_fields=["score"])
+                redirect_response = self._redirect_after_success(request)
+                if redirect_response:
+                    return redirect_response
             return self.render_to_response(self.get_context_data())
 
         if has_upload_parts and "uploaded_file" in request.FILES:
@@ -955,7 +1037,7 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
                 result.score = Decimal("0")
                 result.is_correct = None
                 result.save(update_fields=["submitted_at", "score", "is_correct"])
-                ResultPart.objects.update_or_create(
+                updated_upload_part, _ = ResultPart.objects.update_or_create(
                     result=result,
                     exercise_part=upload_part,
                     defaults={
@@ -971,6 +1053,8 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
                         "graded_by": None,
                     },
                 )
+                updated_upload_part.submitted_at = timezone.now()
+                updated_upload_part.save(update_fields=["submitted_at"])
                 result.recompute_total_score()
                 result.save(update_fields=["score"])
                 # Delete the previous upload only after new save succeeds.
@@ -985,6 +1069,9 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
                 ):
                     if default_storage.exists(old_file_name):
                         default_storage.delete(old_file_name)
+                redirect_response = self._redirect_after_success(request)
+                if redirect_response:
+                    return redirect_response
                 return self.render_to_response(
                     self.get_context_data(upload_form=UploadSubmissionForm())
                 )
@@ -1043,6 +1130,9 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
                 )
                 result.recompute_total_score()
                 result.save(update_fields=["score"])
+            redirect_response = self._redirect_after_success(request)
+            if redirect_response:
+                return redirect_response
             context = self.get_context_data(
                 numerical_form=NumericalAnswerForm(),
             )
@@ -1095,6 +1185,9 @@ class SupervisorSubmissionDetailView(SupervisorRequiredMixin, DetailView):
         context = super().get_context_data(**kwargs)
         upload_part = _result_upload_part(self.object)
         context["upload_result_part"] = upload_part
+        context["is_upload_exercise"] = (
+            self.object.exercise.exercise_type == Exercise.ExerciseType.DOCUMENT_UPLOAD
+        )
         if upload_part:
             initial = {
                 "score": upload_part.score,
@@ -1137,6 +1230,7 @@ class SupervisorSubmissionDetailView(SupervisorRequiredMixin, DetailView):
                         if part_result.tolerance_used is not None
                         else "-"
                     ),
+                    "upload_timestamp": part_result.submitted_at,
                     "awarded_points": part_result.score,
                     "available_points": part_result.exercise_part.available_points,
                 }

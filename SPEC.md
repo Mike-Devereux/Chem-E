@@ -42,7 +42,7 @@ Supervisors can:
 * delete results;
 * archive results;
 * browse archived results later;
-* lock or activate exercises to control student access.
+* deactivate or activate exercises to control student access.
 
 Administrators can:
 
@@ -169,13 +169,14 @@ The total score for an ExerciseVariant is the sum of the points of its parts.
 
 For numerical-answer exercises:
 
-* the student enters one value per ExercisePart;
-* each part is checked independently against its reference solution;
+* the student enters one value per ExercisePart in double-precision;
+* each part is checked independently against its double-precision reference solution;
 * correctness is determined per part;
 * scores are assigned per part and summed;
 * the supervisor provides a reference answer per ExercisePart;
-* the system automatically checks the submitted answer against the reference answer;
+* the system automatically checks the submitted answer against the reference answer with double-precision;
 * the result is stored immediately.
+* scientific and fortran-notation numerical values can be parsed as user input
 
 The system should support a tolerance mechanism.
 
@@ -237,7 +238,7 @@ Students should be able to:
 Supervisors should be able to:
 
 1. Log in.
-2. Open supervisor dashboard.
+2. Open supervisor dashboard with tree editor for course/tutorial/exercise/variant/part.
 3. Create a course.
 4. For each course:
    * Enter a course title;
@@ -251,24 +252,25 @@ Supervisors should be able to:
    * add exercise variants to exercises.
    * deactivate or activate the exercise.
 7. For each variant:
-   * enter an exercise variant text;
+   * enter an exercise variant text using rich text with bold/italic/sub/sup,links,special character,font-size selector,file insertion link;
    * upload images if needed;
    * add exercise parts to variant.
-10. For each exercise part:
-   * enter an exercise part text;
+8. For each exercise part:
+   * enter an exercise part text using rich text with bold/italic/sub/sup,links,special character,font-size selector,file insertion link;
    * upload images if needed;
    * choose input type: numerical answer or document upload;
    * enter reference solutions for numerical exercise parts;
    * set tolerance for numerical checking;
    * set points available;
-7. View student submissions per exercise.
-8. Download uploaded student files.
-9. Manually grade document-upload exercises.
-10. View summary results per course.
-11. Delete incorrect or unwanted results.
-12. Archive results to clear current result pages.
-13. Browse archived results later.
-14. Request a password reset e-mail
+9. Upload files to media/content and browse existing files in media/content to insert into variant and part text
+10. View student submissions per exercise.
+11. Download uploaded student files.
+12. Manually grade document-upload exercises.
+13. View summary results per course.
+14. Delete incorrect or unwanted results.
+15. Archive results to clear current result pages.
+16. Browse archived results later.
+17. Request a password reset e-mail
 
 ## 9. Administrator workflow
 
@@ -350,7 +352,7 @@ Archived results should:
 * remain browsable through an archive interface;
 * preserve scores, submissions, uploaded files, timestamps, and assigned variants.
 
-## 10. Exercise locking and activation
+## 10. Exercise activation
 
 Supervisors can control exercise availability.
 

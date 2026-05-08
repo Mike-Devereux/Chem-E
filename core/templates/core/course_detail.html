@@ -15,11 +15,24 @@
     <h2>Tutorials</h2>
     {% if tutorials %}
         <ul>
-            {% for tutorial in tutorials %}
-                <li>
-                    <a href="{% url 'tutorial_detail' tutorial.pk %}">{{ tutorial.title }}</a>
-                </li>
-            {% endfor %}
+            {% if request.user.role == "student" %}
+                {% for row in tutorial_rows %}
+                    <li>
+                        <a href="{% url 'tutorial_detail' row.tutorial.pk %}">{{ row.tutorial.title }}</a>
+                        {% if row.is_completed %}
+                            (Bewertung ({{ row.achieved_display }}/{{ row.possible_display }}))
+                        {% else %}
+                            (ausstehend)
+                        {% endif %}
+                    </li>
+                {% endfor %}
+            {% else %}
+                {% for tutorial in tutorials %}
+                    <li>
+                        <a href="{% url 'tutorial_detail' tutorial.pk %}">{{ tutorial.title }}</a>
+                    </li>
+                {% endfor %}
+            {% endif %}
         </ul>
     {% else %}
         <p>No tutorials available for this course.</p>

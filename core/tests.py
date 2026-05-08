@@ -1,3 +1,5 @@
+from decimal import Decimal
+from datetime import timedelta
 from django.contrib import admin
 from django.core.exceptions import ValidationError
 from django.core import mail
@@ -7,6 +9,7 @@ from django.db import IntegrityError
 from django.http import HttpResponse
 from django.test import RequestFactory, TestCase, override_settings
 from django.urls import path, reverse
+from django.utils import timezone
 from django.views import View
 import os
 import shutil
@@ -1076,7 +1079,7 @@ class ExerciseVariantAssignmentTests(TestCase):
         self.client.force_login(self.student)
         response = self.client.get(reverse("tutorial_detail", args=[self.tutorial.id]))
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Pending grading (0 / 3)")
+        self.assertContains(response, "Bewertung ausstehend")
 
     def test_tutorial_page_total_uses_assigned_variant_parts_only(self):
         self.client.force_login(self.student)
@@ -1084,6 +1087,150 @@ class ExerciseVariantAssignmentTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Not completed (0 / 1)")
         self.assertNotContains(response, "Not completed (0 / 2)")
+
+    def test_submit_from_tutorial_page_redirects_back_and_keeps_other_exercises_visible(self):
+        second_exercise = Exercise.objects.create(
+            tutorial=self.tutorial,
+            title="Second Exercise",
+            order_index=2,
+            exercise_type=Exercise.ExerciseType.NUMERICAL,
+            is_active=True,
+        )
+        second_variant = ExerciseVariant.objects.create(
+            exercise=second_exercise,
+            exercise_text="Second Variant",
+        )
+        ExercisePart.objects.create(
+            variant=second_variant,
+            label="a",
+            prompt_text="Second part",
+            answer_type=ExerciseVariant.PartAnswerType.NUMERICAL,
+            reference_solution="1.0",
+            absolute_tolerance="0.1",
+            available_points="1.00",
+            order_index=1,
+        )
+
+        self.client.force_login(self.student)
+        tutorial_url = reverse("tutorial_detail", args=[self.tutorial.id])
+        self.client.get(reverse("exercise_detail", args=[self.exercise.id]))
+        assigned_result = Result.objects.get(
+            student=self.student,
+            exercise=self.exercise,
+            is_archived=False,
+        )
+        assigned_part = (
+            ExercisePart.objects.filter(variant=assigned_result.assigned_variant)
+            .order_by("order_index", "id")
+            .first()
+        )
+        self.assertIsNotNone(assigned_part)
+        response = self.client.post(
+            reverse("exercise_detail", args=[self.exercise.id]),
+            {f"numerical_part_{assigned_part.id}": str(assigned_part.reference_solution), "next": tutorial_url},
+            follow=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.request["PATH_INFO"], tutorial_url)
+        self.assertContains(response, self.exercise.title)
+        self.assertContains(response, second_exercise.title)
+
+    def test_course_detail_marks_tutorial_as_ausstehend_by_default(self):
+        self.client.force_login(self.student)
+        response = self.client.get(reverse("course_detail", args=[self.course.id]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "(ausstehend)")
+
+    def test_course_detail_marks_tutorial_as_erfuellt_with_a_over_b(self):
+        self.client.force_login(self.student)
+        self.client.get(reverse("exercise_detail", args=[self.exercise.id]))
+        assigned_result = Result.objects.get(
+            student=self.student,
+            exercise=self.exercise,
+            is_archived=False,
+        )
+        assigned_part = (
+            ExercisePart.objects.filter(variant=assigned_result.assigned_variant)
+            .order_by("order_index", "id")
+            .first()
+        )
+        self.assertIsNotNone(assigned_part)
+        self.client.post(
+            reverse("exercise_detail", args=[self.exercise.id]),
+            {"submitted_value": str(assigned_part.reference_solution)},
+        )
+        response = self.client.get(reverse("course_detail", args=[self.course.id]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "(Bewertung (1/1))")
+
+    def test_course_detail_possible_points_sum_only_assigned_variants_for_student(self):
+        second_exercise = Exercise.objects.create(
+            tutorial=self.tutorial,
+            title="Second weighted exercise",
+            order_index=2,
+            exercise_type=Exercise.ExerciseType.NUMERICAL,
+            is_active=True,
+        )
+        second_variant_a = ExerciseVariant.objects.create(
+            exercise=second_exercise,
+            exercise_text="Variant A",
+        )
+        second_variant_b = ExerciseVariant.objects.create(
+            exercise=second_exercise,
+            exercise_text="Variant B",
+        )
+        ExercisePart.objects.create(
+            variant=second_variant_a,
+            label="a",
+            prompt_text="Part A1",
+            answer_type=ExerciseVariant.PartAnswerType.NUMERICAL,
+            reference_solution="1.0",
+            absolute_tolerance="0.1",
+            available_points="3.00",
+            order_index=1,
+        )
+        ExercisePart.objects.create(
+            variant=second_variant_a,
+            label="b",
+            prompt_text="Part A2",
+            answer_type=ExerciseVariant.PartAnswerType.NUMERICAL,
+            reference_solution="1.0",
+            absolute_tolerance="0.1",
+            available_points="4.00",
+            order_index=2,
+        )
+        ExercisePart.objects.create(
+            variant=second_variant_b,
+            label="a",
+            prompt_text="Part B1",
+            answer_type=ExerciseVariant.PartAnswerType.NUMERICAL,
+            reference_solution="1.0",
+            absolute_tolerance="0.1",
+            available_points="5.00",
+            order_index=1,
+        )
+
+        Result.objects.create(
+            student=self.student,
+            course=self.course,
+            tutorial=self.tutorial,
+            exercise=self.exercise,
+            assigned_variant=self.variant_a,
+            score=Decimal("1.00"),
+        )
+        Result.objects.create(
+            student=self.student,
+            course=self.course,
+            tutorial=self.tutorial,
+            exercise=second_exercise,
+            assigned_variant=second_variant_a,
+            score=Decimal("0.00"),
+        )
+
+        self.client.force_login(self.student)
+        response = self.client.get(reverse("course_detail", args=[self.course.id]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "(Bewertung (1/8))")
 
     def test_tutorial_page_shows_zero_points_as_zero_not_blank(self):
         zero_points_exercise = Exercise.objects.create(
@@ -1217,7 +1364,7 @@ class NumericalAnswerFormViewTests(TestCase):
         response = self.client.get(reverse("exercise_detail", args=[self.numerical_exercise.id]))
 
         self.assertContains(response, "<strong>bold</strong>", html=False)
-        self.assertNotContains(response, "<script>", html=False)
+        self.assertNotContains(response, "<script>alert(1)</script>", html=False)
         self.assertContains(response, "<em>italic</em>", html=False)
         self.assertNotContains(response, 'href="javascript:alert(1)"', html=False)
 
@@ -1226,7 +1373,7 @@ class NumericalAnswerFormViewTests(TestCase):
         response = self.client.get(reverse("exercise_detail", args=[self.upload_exercise.id]))
         self.assertNotContains(response, "Submit numerical answer")
         self.assertNotIn("numerical_form", response.context)
-        self.assertContains(response, "Upload solution file")
+        self.assertContains(response, "Neue Datei hochladen")
         self.assertIn("upload_form", response.context)
 
     def test_numerical_submission_stores_result_fields(self):
@@ -1359,7 +1506,50 @@ class NumericalAnswerFormViewTests(TestCase):
                     os.rmdir(os.path.join(root, dir_name))
             os.rmdir(media_dir)
 
-    def test_upload_submission_cannot_replace_after_manual_grading(self):
+    def test_tutorial_upload_replacement_updates_result_part_timestamp(self):
+        media_dir = tempfile.mkdtemp()
+        try:
+            with self.settings(MEDIA_ROOT=media_dir):
+                self.client.force_login(self.student)
+                self.client.post(
+                    reverse("exercise_detail", args=[self.upload_exercise.id]),
+                    {"uploaded_file": SimpleUploadedFile("first.pdf", b"first")},
+                )
+                result = Result.objects.get(
+                    student=self.student,
+                    exercise=self.upload_exercise,
+                    is_archived=False,
+                )
+                upload_part = _primary_result_part(result)
+                stale_timestamp = timezone.now() - timedelta(days=1)
+                ResultPart.objects.filter(id=upload_part.id).update(submitted_at=stale_timestamp)
+
+                tutorial_url = reverse("tutorial_detail", args=[self.tutorial.id])
+                response = self.client.post(
+                    reverse("exercise_detail", args=[self.upload_exercise.id]),
+                    {
+                        f"upload_part_{upload_part.exercise_part_id}": SimpleUploadedFile(
+                            "second.pdf", b"second"
+                        ),
+                        "next": tutorial_url,
+                    },
+                    follow=True,
+                )
+                self.assertEqual(response.status_code, 200)
+
+                result.refresh_from_db()
+                updated_part = _primary_result_part(result)
+                self.assertIsNotNone(updated_part)
+                self.assertGreater(updated_part.submitted_at, stale_timestamp)
+        finally:
+            for root, dirs, files in os.walk(media_dir, topdown=False):
+                for file_name in files:
+                    os.remove(os.path.join(root, file_name))
+                for dir_name in dirs:
+                    os.rmdir(os.path.join(root, dir_name))
+            os.rmdir(media_dir)
+
+    def test_upload_submission_warns_and_refuses_replace_after_manual_grading_without_confirmation(self):
         self.client.force_login(self.student)
         self.client.post(
             reverse("exercise_detail", args=[self.upload_exercise.id]),
@@ -1378,9 +1568,47 @@ class NumericalAnswerFormViewTests(TestCase):
             {"uploaded_file": SimpleUploadedFile("new_attempt.pdf", b"new")},
         )
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "cannot be replaced")
+        self.assertContains(
+            response,
+            "Do you really want to upload a new file? Any existing file and any existing grade will be overwritten!",
+        )
         result.refresh_from_db()
         self.assertEqual(_primary_result_part(result).uploaded_file.name, original_name)
+
+    def test_upload_submission_can_replace_after_manual_grading_with_confirmation(self):
+        self.client.force_login(self.student)
+        self.client.post(
+            reverse("exercise_detail", args=[self.upload_exercise.id]),
+            {"uploaded_file": SimpleUploadedFile("graded.pdf", b"graded")},
+        )
+        result = Result.objects.get(
+            student=self.student,
+            exercise=self.upload_exercise,
+            is_archived=False,
+        )
+        original_result_part = _primary_result_part(result)
+        original_id = original_result_part.id
+        original_name = original_result_part.uploaded_file.name
+        _set_result_part_data(result, is_manually_graded=True, score=Decimal("2.00"))
+
+        response = self.client.post(
+            reverse("exercise_detail", args=[self.upload_exercise.id]),
+            {
+                f"upload_part_{original_result_part.exercise_part_id}": SimpleUploadedFile(
+                    "new_attempt.pdf", b"new"
+                ),
+                "force_replace_graded_upload": "1",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        result.refresh_from_db()
+        new_result_part = _primary_result_part(result)
+        self.assertIsNotNone(new_result_part)
+        self.assertNotEqual(new_result_part.id, original_id)
+        self.assertTrue(new_result_part.uploaded_file.name.endswith(".pdf"))
+        self.assertNotEqual(new_result_part.uploaded_file.name, original_name)
+        self.assertFalse(new_result_part.is_manually_graded)
+        self.assertEqual(str(new_result_part.score), "0.00")
 
     def test_upload_submission_rejects_disallowed_file_type(self):
         self.client.force_login(self.student)
@@ -1690,6 +1918,51 @@ class SupervisorExerciseSubmissionsViewTests(TestCase):
         self.assertContains(response, ">1<")
         self.assertNotContains(response, "Correctness")
         self.assertContains(response, "Score:")
+
+    def test_supervisor_submission_detail_for_upload_exercise_shows_upload_timestamp_column(self):
+        upload_exercise = Exercise.objects.create(
+            tutorial=self.tutorial,
+            title="Upload Submission Exercise",
+            order_index=2,
+            exercise_type=Exercise.ExerciseType.DOCUMENT_UPLOAD,
+        )
+        upload_variant = ExerciseVariant.objects.create(
+            exercise=upload_exercise,
+            exercise_text="Upload your file",
+            available_points="4.00",
+        )
+        upload_part = upload_variant.parts.order_by("order_index", "id").first()
+        self.assertIsNotNone(upload_part)
+        upload_part.answer_type = ExerciseVariant.PartAnswerType.DOCUMENT_UPLOAD
+        upload_part.available_points = Decimal("4.00")
+        upload_part.save(update_fields=["answer_type", "available_points"])
+        upload_result = Result.objects.create(
+            student=self.student,
+            course=self.course,
+            tutorial=self.tutorial,
+            exercise=upload_exercise,
+            assigned_variant=upload_variant,
+            score="0.00",
+            is_manually_graded=False,
+        )
+        ResultPart.objects.update_or_create(
+            result=upload_result,
+            exercise_part=upload_part,
+            defaults={
+                "uploaded_file": SimpleUploadedFile("upload_answer.pdf", b"file-data"),
+                "score": "0.00",
+                "is_manually_graded": False,
+            },
+        )
+
+        self.client.force_login(self.supervisor)
+        response = self.client.get(
+            reverse("supervisor_submission_detail", args=[upload_result.id])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Upload timestamp")
+        self.assertNotContains(response, "Reference solution")
+        self.assertNotContains(response, "Tolerance")
 
     def test_student_cannot_access_supervisor_submission_detail(self):
         result = Result.objects.get(student=self.student, exercise=self.exercise, is_archived=False)

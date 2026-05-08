@@ -30,8 +30,12 @@
             <tr>
                 <th>Teil</th>
                 <th>Submitted value</th>
-                <th>Reference solution</th>
-                <th>Tolerance</th>
+                {% if is_upload_exercise %}
+                    <th>Upload timestamp</th>
+                {% else %}
+                    <th>Reference solution</th>
+                    <th>Tolerance</th>
+                {% endif %}
                 <th>Awarded points</th>
                 <th>Available points</th>
             </tr>
@@ -47,8 +51,12 @@
                             {{ row.submitted_value }}
                         {% endif %}
                     </td>
-                    <td>{{ row.reference_solution }}</td>
-                    <td>{{ row.tolerance }}</td>
+                    {% if is_upload_exercise %}
+                        <td>{% if row.upload_timestamp %}{{ row.upload_timestamp|date:"Y-m-d H:i:s" }}{% else %}-{% endif %}</td>
+                    {% else %}
+                        <td>{{ row.reference_solution }}</td>
+                        <td>{{ row.tolerance }}</td>
+                    {% endif %}
                     <td>{{ row.awarded_points }}</td>
                     <td>{{ row.available_points }}</td>
                 </tr>
@@ -56,7 +64,7 @@
             {% if upload_result_part and upload_result_part.feedback %}
                 <tr>
                     <th>Feedback</th>
-                    <td colspan="5">{{ upload_result_part.feedback }}</td>
+                    <td colspan="{% if is_upload_exercise %}4{% else %}5{% endif %}">{{ upload_result_part.feedback }}</td>
                 </tr>
             {% endif %}
         </tbody>

@@ -8,6 +8,19 @@
         .tutorial-footer-gap {
             margin-bottom: 40px;
         }
+        .pending-grading {
+            color: #cc7a00;
+        }
+        .file-upload-input {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            border: 0;
+        }
     </style>
 </head>
 <body>
@@ -17,16 +30,20 @@
         <p>{{ tutorial.description }}</p>
     {% endif %}
 
-    <h2>Exercises</h2>
+        <h2>Übungen</h2>
     {% if exercises %}
         {% for row in exercise_rows %}
             <section>
                 <h3>
                     {{ row.exercise.title }}
                     {% if row.status == "completed" %}
-                        - Completed ({{ row.score_display }} / {{ row.total_display }})
+                        {% if row.has_upload_parts %}
+                            - Bewertung: ({{ row.score_display }} / {{ row.total_display }})
+                        {% else %}
+                            - Completed ({{ row.score_display }} / {{ row.total_display }})
+                        {% endif %}
                     {% elif row.status == "pending_grading" %}
-                        - Pending grading ({{ row.score_display }} / {{ row.total_display }})
+                        - <span class="pending-grading">Bewertung ausstehend</span>
                     {% else %}
                         - Not completed ({{ row.score_display }} / {{ row.total_display }})
                     {% endif %}
@@ -44,11 +61,18 @@
                 {% if row.parts %}
                     <form method="post" enctype="multipart/form-data" action="{% url 'exercise_detail' row.exercise.pk %}">
                         {% csrf_token %}
+                        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                        <input type="hidden" name="force_replace_graded_upload" value="0">
                         {% for part in row.parts %}
                             <fieldset>
                                 <legend>Teil {{ part.label }}</legend>
                                 {% if part.prompt_text %}
                                     <div>{{ part.prompt_text|safe }}</div>
+                                {% endif %}
+                                {% if part.saved_result_part and part.saved_result_part.uploaded_file %}
+                                    <p>
+                                        <strong>hochgeladene Datei:</strong> {{ part.saved_result_part.uploaded_file.name|cut:"student_submissions/" }}
+                                    </p>
                                 {% endif %}
                                 {% if part.answer_type == "numerical" %}
                                     <label for="numerical_part_{{ part.id }}">
@@ -59,15 +83,22 @@
                                         <span>{{ part.points_display }}</span>
                                     {% endif %}
                                 {% elif part.answer_type == "document_upload" %}
-                                    <label for="upload_part_{{ part.id }}">Upload solution file</label>
-                                    <input id="upload_part_{{ part.id }}" name="upload_part_{{ part.id }}" type="file">
-                                    {% if part.points_display %}
-                                        <span>{{ part.points_display }}</span>
-                                    {% endif %}
+                                    <label for="upload_part_{{ part.id }}">Neue Datei hochladen:</label>
+                                    <input
+                                        id="upload_part_{{ part.id }}"
+                                        name="upload_part_{{ part.id }}"
+                                        type="file"
+                                        class="file-upload-input"
+                                        {% if part.saved_result_part and part.saved_result_part.uploaded_file %}
+                                            data-has-existing-upload="1"
+                                        {% endif %}
+                                    >
+                                    <button type="button" data-upload-trigger="upload_part_{{ part.id }}">Auswählen</button>
+                                    <span id="upload_part_{{ part.id }}_name"><i>keine ausgewählte Datei</i></span>
                                 {% endif %}
                             </fieldset>
                         {% endfor %}
-                        <button type="submit">Submit</button>
+                        <button type="submit">Senden</button>
                     </form>
                 {% endif %}
             </section>
@@ -76,5 +107,45 @@
         <p>No exercises available for this tutorial.</p>
     {% endif %}
     <div class="tutorial-footer-gap" aria-hidden="true"></div>
+    <script>
+        (() => {
+            document.querySelectorAll("form[enctype='multipart/form-data']").forEach((form) => {
+                const forceReplaceInput = form.querySelector("input[name='force_replace_graded_upload']");
+                form.querySelectorAll("button[data-upload-trigger]").forEach((button) => {
+                    const inputId = button.getAttribute("data-upload-trigger");
+                    const input = form.querySelector(`#${inputId}`);
+                    const nameDisplay = form.querySelector(`#${inputId}_name`);
+                    if (!input || !nameDisplay) {
+                        return;
+                    }
+                    button.addEventListener("click", () => {
+                        const hasExistingUpload = input.dataset.hasExistingUpload === "1";
+                        if (forceReplaceInput) {
+                            forceReplaceInput.value = "0";
+                        }
+                        if (hasExistingUpload) {
+                            const confirmed = window.confirm(
+                                "Do you really want to upload a new file? Any existing file and any existing grade will be overwritten!"
+                            );
+                            if (!confirmed) {
+                                return;
+                            }
+                            if (forceReplaceInput) {
+                                forceReplaceInput.value = "1";
+                            }
+                        }
+                        input.click();
+                    });
+                    input.addEventListener("change", () => {
+                        if (input.files && input.files.length > 0) {
+                            nameDisplay.textContent = input.files[0].name;
+                        } else {
+                            nameDisplay.textContent = "keine ausgewählte Datei";
+                        }
+                    });
+                });
+            });
+        })();
+    </script>
 </body>
 </html>

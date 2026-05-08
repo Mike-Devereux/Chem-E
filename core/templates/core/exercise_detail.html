@@ -4,6 +4,18 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ exercise.title }}</title>
+    <style>
+        .file-upload-input {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            border: 0;
+        }
+    </style>
 </head>
 <body>
     <p><a href="{% url 'tutorial_detail' exercise.tutorial_id %}">Back to tutorial</a></p>
@@ -22,7 +34,7 @@
 
     {% if parts %}
         {% if has_upload_parts %}
-            <h2>Upload solution file</h2>
+            <h2>Neue Datei hochladen</h2>
         {% endif %}
         {% if submission_errors %}
             <ul>
@@ -39,6 +51,7 @@
         {% endif %}
         <form method="post" enctype="multipart/form-data">
             {% csrf_token %}
+            <input type="hidden" name="force_replace_graded_upload" value="0">
             {% for part in parts %}
                 <fieldset>
                     <legend>Teil {{ part.label }}</legend>
@@ -54,16 +67,68 @@
                             <span>{{ part.points_display }}</span>
                         {% endif %}
                     {% elif part.answer_type == "document_upload" %}
-                        <label for="upload_part_{{ part.id }}">Upload solution file</label>
-                        <input id="upload_part_{{ part.id }}" name="upload_part_{{ part.id }}" type="file">
+                        <label for="upload_part_{{ part.id }}">Neue Datei hochladen</label>
+                        <input
+                            id="upload_part_{{ part.id }}"
+                            name="upload_part_{{ part.id }}"
+                            type="file"
+                            class="file-upload-input"
+                            {% if part.saved_result_part and part.saved_result_part.uploaded_file %}
+                                data-has-existing-upload="1"
+                            {% endif %}
+                        >
+                        <button type="button" data-upload-trigger="upload_part_{{ part.id }}">Auswählen</button>
+                        <span id="upload_part_{{ part.id }}_name">keine ausgewählte Datei</span>
                         {% if part.points_display %}
                             <span>{{ part.points_display }}</span>
                         {% endif %}
                     {% endif %}
                 </fieldset>
             {% endfor %}
-            <button type="submit">Submit</button>
+            <button type="submit">Senden</button>
         </form>
     {% endif %}
+    <script>
+        (() => {
+            const form = document.querySelector("form[enctype='multipart/form-data']");
+            if (!form) {
+                return;
+            }
+            const forceReplaceInput = form.querySelector("input[name='force_replace_graded_upload']");
+            form.querySelectorAll("button[data-upload-trigger]").forEach((button) => {
+                const inputId = button.getAttribute("data-upload-trigger");
+                const input = form.querySelector(`#${inputId}`);
+                const nameDisplay = form.querySelector(`#${inputId}_name`);
+                if (!input || !nameDisplay) {
+                    return;
+                }
+                button.addEventListener("click", () => {
+                    const hasExistingUpload = input.dataset.hasExistingUpload === "1";
+                    if (forceReplaceInput) {
+                        forceReplaceInput.value = "0";
+                    }
+                    if (hasExistingUpload) {
+                        const confirmed = window.confirm(
+                            "Do you really want to upload a new file? Any existing file and any existing grade will be overwritten!"
+                        );
+                        if (!confirmed) {
+                            return;
+                        }
+                        if (forceReplaceInput) {
+                            forceReplaceInput.value = "1";
+                        }
+                    }
+                    input.click();
+                });
+                input.addEventListener("change", () => {
+                    if (input.files && input.files.length > 0) {
+                        nameDisplay.textContent = input.files[0].name;
+                    } else {
+                        nameDisplay.textContent = "keine ausgewählte Datei";
+                    }
+                });
+            });
+        })();
+    </script>
 </body>
 </html>
