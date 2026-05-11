@@ -75,6 +75,16 @@ def _format_decimal_compact(value):
     return trimmed if trimmed else "0"
 
 
+def _format_decimal_two_places(value):
+    """Format a numeric value for display with exactly two decimal places."""
+    if value is None:
+        return "0.00"
+    if not isinstance(value, Decimal):
+        value = Decimal(str(value))
+    quantized = value.quantize(Decimal("0.01"))
+    return format(quantized, "f")
+
+
 def _user_can_access_course(user, course):
     if user.is_superuser or user.role == User.Role.ADMINISTRATOR:
         return True
@@ -1367,6 +1377,7 @@ class SupervisorCourseSummaryView(SupervisorRequiredMixin, DetailView):
             for student in students:
                 cells = []
                 row_total = Decimal("0")
+                row_possible_total = Decimal("0")
                 for part in exercise_parts:
                     result = result_by_student_exercise.get((student.id, part.variant.exercise_id))
                     result_part = (
@@ -1377,13 +1388,28 @@ class SupervisorCourseSummaryView(SupervisorRequiredMixin, DetailView):
                         else None
                     )
                     cells.append(result_part)
+                    if result_part:
+                        row_possible_total += result_part.exercise_part.available_points
+                    else:
+                        row_possible_total += part.available_points
                     if result_part and not (
                         result_part.exercise_part.answer_type
                         == ExerciseVariant.PartAnswerType.DOCUMENT_UPLOAD
                         and not result_part.is_manually_graded
                     ):
                         row_total += result_part.score
-                rows.append({"student": student, "cells": cells, "row_total": row_total})
+                rows.append(
+                    {
+                        "student": student,
+                        "cells": cells,
+                        "row_total": row_total,
+                        "row_total_possible": row_possible_total,
+                        "row_total_display": (
+                            f"{_format_decimal_two_places(row_total)}"
+                            f" / {_format_decimal_two_places(row_possible_total)}"
+                        ),
+                    }
+                )
             tutorial_tables.append(
                 {
                     "tutorial": tutorial,

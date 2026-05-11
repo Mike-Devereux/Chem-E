@@ -91,7 +91,7 @@
                                 {% else %}
                                     <td class="cell-graded">
                                         <a href="{% url 'supervisor_submission_detail' result_part.result_id %}">
-                                            {{ result_part.score }}
+                                            {{ result_part.score|floatformat:2 }}
                                         </a>
                                     </td>
                                 {% endif %}
@@ -99,7 +99,7 @@
                                 <td class="cell-missing">-</td>
                             {% endif %}
                         {% endfor %}
-                        <td>{{ row.row_total }}</td>
+                        <td>{{ row.row_total_display }}</td>
                     </tr>
                 {% endfor %}
             </tbody>

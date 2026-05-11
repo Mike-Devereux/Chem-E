@@ -378,21 +378,20 @@
             if (!button) {
                 return;
             }
-            button.addEventListener("click", async () => {
+            button.addEventListener("click", () => {
                 if (!selectedNode || !["variant", "part"].includes(selectedNode.nodeType)) {
                     return;
                 }
-                const proceed = window.confirm(
+                window.alert(
                     "Files are stored in media/content using their original filename. Uploading a file with the same name will overwrite the existing file."
                 );
-                if (!proceed) {
-                    return;
-                }
                 const picker = document.createElement("input");
                 picker.type = "file";
+                picker.style.display = "none";
                 picker.addEventListener("change", async () => {
                     const file = picker.files && picker.files[0];
                     if (!file) {
+                        picker.remove();
                         return;
                     }
                     const formData = new FormData();
@@ -419,8 +418,11 @@
                         quill.setSelection(insertAt + linkText.length, 0);
                     } catch (error) {
                         // Fail silently and keep current text unchanged.
+                    } finally {
+                        picker.remove();
                     }
                 });
+                document.body.appendChild(picker);
                 picker.click();
             });
         }
