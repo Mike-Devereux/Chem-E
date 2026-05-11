@@ -5,7 +5,6 @@ from .views import (
     CourseDetailView,
     CourseListView,
     ExerciseDetailView,
-    LegacySupervisorWorkflowRedirectView,
     LogoutView,
     RegisterView,
     RoleAwareLoginView,
@@ -39,76 +38,6 @@ urlpatterns = [
         "supervisor/exercises/<int:exercise_id>/submissions/",
         SupervisorExerciseSubmissionsView.as_view(),
         name="supervisor_exercise_submissions",
-    ),
-    path(
-        "supervisor/courses/",
-        LegacySupervisorWorkflowRedirectView.as_view(),
-        name="supervisor_course_manage_list",
-    ),
-    path(
-        "supervisor/courses/<int:course_id>/manage/",
-        LegacySupervisorWorkflowRedirectView.as_view(),
-        name="supervisor_course_manage_detail",
-    ),
-    path(
-        "supervisor/courses/<int:course_id>/edit/",
-        LegacySupervisorWorkflowRedirectView.as_view(),
-        name="supervisor_course_edit",
-    ),
-    path(
-        "supervisor/courses/<int:course_id>/tutorials/new/",
-        LegacySupervisorWorkflowRedirectView.as_view(),
-        name="supervisor_tutorial_create",
-    ),
-    path(
-        "supervisor/tutorials/<int:tutorial_id>/manage/",
-        LegacySupervisorWorkflowRedirectView.as_view(),
-        name="supervisor_tutorial_manage_detail",
-    ),
-    path(
-        "supervisor/tutorials/<int:tutorial_id>/edit/",
-        LegacySupervisorWorkflowRedirectView.as_view(),
-        name="supervisor_tutorial_edit",
-    ),
-    path(
-        "supervisor/tutorials/<int:tutorial_id>/exercises/new/",
-        LegacySupervisorWorkflowRedirectView.as_view(),
-        name="supervisor_exercise_create",
-    ),
-    path(
-        "supervisor/exercises/<int:exercise_id>/manage/",
-        LegacySupervisorWorkflowRedirectView.as_view(),
-        name="supervisor_exercise_manage_detail",
-    ),
-    path(
-        "supervisor/exercises/<int:exercise_id>/edit/",
-        LegacySupervisorWorkflowRedirectView.as_view(),
-        name="supervisor_exercise_edit",
-    ),
-    path(
-        "supervisor/exercises/<int:exercise_id>/variants/new/",
-        LegacySupervisorWorkflowRedirectView.as_view(),
-        name="supervisor_exercise_variant_create",
-    ),
-    path(
-        "supervisor/variants/<int:variant_id>/edit/",
-        LegacySupervisorWorkflowRedirectView.as_view(),
-        name="supervisor_exercise_variant_edit",
-    ),
-    path(
-        "supervisor/variants/<int:variant_id>/manage/",
-        LegacySupervisorWorkflowRedirectView.as_view(),
-        name="supervisor_exercise_variant_manage_detail",
-    ),
-    path(
-        "supervisor/variants/<int:variant_id>/parts/new/",
-        LegacySupervisorWorkflowRedirectView.as_view(),
-        name="supervisor_exercise_part_create",
-    ),
-    path(
-        "supervisor/parts/<int:part_id>/edit/",
-        LegacySupervisorWorkflowRedirectView.as_view(),
-        name="supervisor_exercise_part_edit",
     ),
     path(
         "supervisor/submissions/<int:result_id>/",

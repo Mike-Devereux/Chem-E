@@ -45,12 +45,6 @@ from .models import (
 from .numeric_parsing import parse_decimal_value
 
 
-def _result_has_submission_data(result):
-    return result.parts.filter(
-        Q(submitted_numerical_value__isnull=False) | Q(uploaded_file__isnull=False)
-    ).exists()
-
-
 def _result_upload_part(result):
     return (
         result.parts.filter(exercise_part__answer_type=ExerciseVariant.PartAnswerType.DOCUMENT_UPLOAD)
@@ -276,14 +270,6 @@ class SupervisorTreePageView(SupervisorRequiredMixin, View):
 
     def get(self, request):
         return render(request, self.template_name)
-
-
-class LegacySupervisorWorkflowRedirectView(SupervisorRequiredMixin, View):
-    def get(self, request, *args, **kwargs):
-        return redirect("supervisor_tree")
-
-    def post(self, request, *args, **kwargs):
-        return redirect("supervisor_tree")
 
 
 class SupervisorTreeDataView(SupervisorRequiredMixin, View):
@@ -917,21 +903,6 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
             context["upload_form"] = kwargs.get("upload_form") or UploadSubmissionForm()
         return context
 
-    def _ensure_default_part_for_variant(self, variant):
-        part = variant.parts.order_by("order_index", "id").first()
-        if part:
-            return part
-        return ExercisePart.objects.create(
-            variant=variant,
-            label="a",
-            prompt_text="",
-            answer_type=ExerciseVariant.PartAnswerType.NUMERICAL,
-            reference_solution=None,
-            absolute_tolerance=None,
-            available_points=Decimal("1.00"),
-            order_index=1,
-        )
-
     def _get_or_assign_student_result(self):
         variants = list(self.object.variants.order_by("id"))
         if not variants:
@@ -1119,138 +1090,9 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
                     return redirect_response
             return self.render_to_response(self.get_context_data())
 
-        if has_upload_parts and "uploaded_file" in request.FILES:
-            form = UploadSubmissionForm(request.POST, request.FILES)
-            if form.is_valid() and result:
-                upload_part = (
-                    result.assigned_variant.parts.filter(
-                        answer_type=ExerciseVariant.PartAnswerType.DOCUMENT_UPLOAD
-                    )
-                    .order_by("order_index", "id")
-                    .first()
-                    or self._ensure_default_part_for_variant(result.assigned_variant)
-                )
-                upload_result_part = ResultPart.objects.filter(
-                    result=result,
-                    exercise_part=upload_part,
-                ).first()
-                if upload_result_part and upload_result_part.is_manually_graded:
-                    form.add_error(
-                        None,
-                        "This submission has already been manually graded and cannot be replaced.",
-                    )
-                    return self.render_to_response(self.get_context_data(upload_form=form))
-
-                old_file_name = (
-                    upload_result_part.uploaded_file.name
-                    if upload_result_part and upload_result_part.uploaded_file
-                    else None
-                )
-                result.submitted_at = timezone.now()
-                result.score = Decimal("0")
-                result.is_correct = None
-                result.save(update_fields=["submitted_at", "score", "is_correct"])
-                updated_upload_part, _ = ResultPart.objects.update_or_create(
-                    result=result,
-                    exercise_part=upload_part,
-                    defaults={
-                        "submitted_numerical_value": None,
-                        "uploaded_file": form.cleaned_data["uploaded_file"],
-                        "reference_value_used": None,
-                        "tolerance_used": None,
-                        "is_correct": None,
-                        "score": Decimal("0"),
-                        "is_manually_graded": False,
-                        "feedback": "",
-                        "graded_at": None,
-                        "graded_by": None,
-                    },
-                )
-                updated_upload_part.submitted_at = timezone.now()
-                updated_upload_part.save(update_fields=["submitted_at"])
-                result.recompute_total_score()
-                result.save(update_fields=["score"])
-                # Delete the previous upload only after new save succeeds.
-                new_upload_result_part = ResultPart.objects.get(
-                    result=result,
-                    exercise_part=upload_part,
-                )
-                if (
-                    old_file_name
-                    and new_upload_result_part.uploaded_file
-                    and old_file_name != new_upload_result_part.uploaded_file.name
-                ):
-                    if default_storage.exists(old_file_name):
-                        default_storage.delete(old_file_name)
-                redirect_response = self._redirect_after_success(request)
-                if redirect_response:
-                    return redirect_response
-                return self.render_to_response(
-                    self.get_context_data(upload_form=UploadSubmissionForm())
-                )
-            return self.render_to_response(self.get_context_data(upload_form=form))
-
         if not has_numerical_parts:
             return self.render_to_response(self.get_context_data())
-
-        form = NumericalAnswerForm(request.POST)
-        if form.is_valid():
-            is_correct = None
-            if (
-                variant
-                and (
-                    numerical_part := (
-                        variant.parts.filter(answer_type=ExerciseVariant.PartAnswerType.NUMERICAL)
-                        .order_by("order_index", "id")
-                        .first()
-                        or self._ensure_default_part_for_variant(variant)
-                    )
-                )
-                and numerical_part.reference_solution is not None
-                and numerical_part.absolute_tolerance is not None
-            ):
-                is_correct = is_numerical_answer_correct(
-                    submitted_value=form.cleaned_data["submitted_value"],
-                    reference_solution=numerical_part.reference_solution,
-                    absolute_tolerance=numerical_part.absolute_tolerance,
-                )
-            if result and is_correct is not None:
-                result.is_correct = is_correct
-                result.score = numerical_part.available_points if is_correct else Decimal("0")
-                result.submitted_at = timezone.now()
-                result.save(
-                    update_fields=[
-                        "is_correct",
-                        "score",
-                        "submitted_at",
-                    ]
-                )
-                ResultPart.objects.update_or_create(
-                    result=result,
-                    exercise_part=numerical_part,
-                    defaults={
-                        "submitted_numerical_value": form.cleaned_data["submitted_value"],
-                        "uploaded_file": None,
-                        "reference_value_used": numerical_part.reference_solution,
-                        "tolerance_used": numerical_part.absolute_tolerance,
-                        "is_correct": is_correct,
-                        "score": numerical_part.available_points if is_correct else Decimal("0"),
-                        "is_manually_graded": True,
-                        "feedback": "",
-                        "graded_at": timezone.now(),
-                        "graded_by": None,
-                    },
-                )
-                result.recompute_total_score()
-                result.save(update_fields=["score"])
-            redirect_response = self._redirect_after_success(request)
-            if redirect_response:
-                return redirect_response
-            context = self.get_context_data(
-                numerical_form=NumericalAnswerForm(),
-            )
-            return self.render_to_response(context)
-        return self.render_to_response(self.get_context_data(numerical_form=form))
+        return self.render_to_response(self.get_context_data())
 
 
 class SupervisorExerciseSubmissionsView(SupervisorRequiredMixin, DetailView):

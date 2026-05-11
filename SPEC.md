@@ -338,6 +338,15 @@ The summary page should support:
 * identifying missing submissions;
 * exporting results, optional later feature.
 
+Current implemented selection behavior for `/supervisor/courses/<id>/summary/`:
+
+* only current (non-archived) results are included;
+* only results for active exercises are included;
+* when a tutorial filter is set, only results from exercises in the selected tutorial are included;
+* the student list is derived from students who already have at least one included result in the current filter scope;
+* students with no included result in scope are not listed in the table;
+* selecting a student filter restricts table rows to that student only.
+
 ### 9.3 Deleting results
 
 Supervisors can delete results (hard deletion).

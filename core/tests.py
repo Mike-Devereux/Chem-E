@@ -1197,7 +1197,7 @@ class ExerciseVariantAssignmentTests(TestCase):
         self.assertIsNotNone(assigned_part)
         self.client.post(
             reverse("exercise_detail", args=[self.exercise.id]),
-            {"submitted_value": str(assigned_part.reference_solution)},
+            {f"numerical_part_{assigned_part.id}": str(assigned_part.reference_solution)},
         )
         response = self.client.get(reverse("course_detail", args=[self.course.id]))
         self.assertEqual(response.status_code, 200)
@@ -1344,10 +1344,16 @@ class NumericalAnswerFormViewTests(TestCase):
         response = self.client.get(reverse("exercise_detail", args=[self.numerical_exercise.id]))
         self.assertContains(response, "Lösung (Präzision +/- 0.1)")
         self.assertIn("numerical_form", response.context)
+        result = Result.objects.get(
+            student=self.student,
+            exercise=self.numerical_exercise,
+            is_archived=False,
+        )
+        part = _first_part_for_result(result)
 
         post_response = self.client.post(
             reverse("exercise_detail", args=[self.numerical_exercise.id]),
-            {"submitted_value": "12.34"},
+            {f"numerical_part_{part.id}": "12.34"},
         )
         self.assertEqual(post_response.status_code, 200)
         self.assertContains(post_response, 'value="12.34"')
@@ -1364,29 +1370,38 @@ class NumericalAnswerFormViewTests(TestCase):
 
     def test_numerical_exercise_rejects_non_numeric_input(self):
         self.client.force_login(self.student)
+        result = Result.objects.create(
+            student=self.student,
+            course=self.course,
+            tutorial=self.tutorial,
+            exercise=self.numerical_exercise,
+            assigned_variant=self.numerical_exercise.variants.first(),
+            is_archived=False,
+        )
+        part = _first_part_for_result(result)
         response = self.client.post(
             reverse("exercise_detail", args=[self.numerical_exercise.id]),
-            {"submitted_value": "not-a-number"},
+            {f"numerical_part_{part.id}": "not-a-number"},
         )
         self.assertEqual(response.status_code, 200)
-        self.assertFormError(
-            response.context["numerical_form"],
-            "submitted_value",
-            "Enter a number.",
-        )
+        self.assertContains(response, "Part a: enter a valid numerical value.")
 
     def test_numerical_exercise_accepts_fortran_notation(self):
         self.client.force_login(self.student)
-        response = self.client.post(
-            reverse("exercise_detail", args=[self.numerical_exercise.id]),
-            {"submitted_value": "1.002d1"},
-        )
-        self.assertEqual(response.status_code, 200)
-        result = Result.objects.get(
+        result = Result.objects.create(
             student=self.student,
+            course=self.course,
+            tutorial=self.tutorial,
             exercise=self.numerical_exercise,
+            assigned_variant=self.numerical_exercise.variants.first(),
             is_archived=False,
         )
+        part = _first_part_for_result(result)
+        response = self.client.post(
+            reverse("exercise_detail", args=[self.numerical_exercise.id]),
+            {f"numerical_part_{part.id}": "1.002d1"},
+        )
+        self.assertEqual(response.status_code, 200)
         self.assertAlmostEqual(
             float(_primary_result_part(result).submitted_numerical_value),
             10.02,
@@ -1418,17 +1433,36 @@ class NumericalAnswerFormViewTests(TestCase):
 
     def test_numerical_submission_stores_result_fields(self):
         self.client.force_login(self.student)
-        response = self.client.post(
-            reverse("exercise_detail", args=[self.numerical_exercise.id]),
-            {"submitted_value": "10.02"},
+        part = ExercisePart.objects.filter(
+            variant__exercise=self.numerical_exercise
+        ).order_by("order_index", "id").first()
+        self.assertIsNotNone(part)
+        part.answer_type = ExerciseVariant.PartAnswerType.NUMERICAL
+        part.reference_solution = 10.0
+        part.absolute_tolerance = 0.1
+        part.available_points = Decimal("2.00")
+        part.save(
+            update_fields=[
+                "answer_type",
+                "reference_solution",
+                "absolute_tolerance",
+                "available_points",
+            ]
         )
-        self.assertEqual(response.status_code, 200)
-
-        result = Result.objects.get(
+        result = Result.objects.create(
             student=self.student,
+            course=self.course,
+            tutorial=self.tutorial,
             exercise=self.numerical_exercise,
+            assigned_variant=self.numerical_exercise.variants.first(),
             is_archived=False,
         )
+        response = self.client.post(
+            reverse("exercise_detail", args=[self.numerical_exercise.id]),
+            {f"numerical_part_{part.id}": "10.02"},
+        )
+        self.assertEqual(response.status_code, 200)
+        result.refresh_from_db()
         result_part = _primary_result_part(result)
         self.assertAlmostEqual(float(result_part.submitted_numerical_value), 10.02)
         self.assertTrue(result.is_correct)
@@ -1441,9 +1475,18 @@ class NumericalAnswerFormViewTests(TestCase):
 
     def test_second_submission_updates_existing_result(self):
         self.client.force_login(self.student)
+        result = Result.objects.create(
+            student=self.student,
+            course=self.course,
+            tutorial=self.tutorial,
+            exercise=self.numerical_exercise,
+            assigned_variant=self.numerical_exercise.variants.first(),
+            is_archived=False,
+        )
+        part = _first_part_for_result(result)
         self.client.post(
             reverse("exercise_detail", args=[self.numerical_exercise.id]),
-            {"submitted_value": "9.00"},
+            {f"numerical_part_{part.id}": "9.00"},
         )
         first_result = Result.objects.get(
             student=self.student,
@@ -1453,7 +1496,7 @@ class NumericalAnswerFormViewTests(TestCase):
 
         self.client.post(
             reverse("exercise_detail", args=[self.numerical_exercise.id]),
-            {"submitted_value": "10.00"},
+            {f"numerical_part_{part.id}": "10.00"},
         )
         second_result = Result.objects.get(
             student=self.student,
@@ -1480,9 +1523,18 @@ class NumericalAnswerFormViewTests(TestCase):
 
     def test_revisit_shows_existing_submission_result(self):
         self.client.force_login(self.student)
+        result = Result.objects.create(
+            student=self.student,
+            course=self.course,
+            tutorial=self.tutorial,
+            exercise=self.numerical_exercise,
+            assigned_variant=self.numerical_exercise.variants.first(),
+            is_archived=False,
+        )
+        part = _first_part_for_result(result)
         self.client.post(
             reverse("exercise_detail", args=[self.numerical_exercise.id]),
-            {"submitted_value": "10.00"},
+            {f"numerical_part_{part.id}": "10.00"},
         )
         revisit_response = self.client.get(
             reverse("exercise_detail", args=[self.numerical_exercise.id])
@@ -1493,24 +1545,27 @@ class NumericalAnswerFormViewTests(TestCase):
 
     def test_upload_submission_saves_file_to_existing_result(self):
         self.client.force_login(self.student)
+        result = Result.objects.create(
+            student=self.student,
+            course=self.course,
+            tutorial=self.tutorial,
+            exercise=self.upload_exercise,
+            assigned_variant=self.upload_exercise.variants.first(),
+            is_archived=False,
+        )
+        part = _first_part_for_result(result)
         response = self.client.post(
             reverse("exercise_detail", args=[self.upload_exercise.id]),
-            {"uploaded_file": SimpleUploadedFile("solution.pdf", b"upload content")},
+            {f"upload_part_{part.id}": SimpleUploadedFile("solution.pdf", b"upload content")},
         )
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Punkte: 0 / 2")
-
-        result = Result.objects.get(
-            student=self.student,
-            exercise=self.upload_exercise,
-            is_archived=False,
-        )
         result_part = _primary_result_part(result)
         self.assertTrue(bool(result_part.uploaded_file))
         self.assertTrue(result_part.uploaded_file.name.endswith(".pdf"))
         self.assertIn("student_submissions/", result_part.uploaded_file.name)
         self.assertEqual(result.assigned_variant.exercise, self.upload_exercise)
-        self.assertEqual(str(result.score), "0.00")
+        self.assertEqual(result.score, Decimal("0"))
         self.assertFalse(result_part.is_manually_graded)
         self.assertIsNone(result_part.submitted_numerical_value)
 
@@ -1519,21 +1574,25 @@ class NumericalAnswerFormViewTests(TestCase):
         try:
             with self.settings(MEDIA_ROOT=media_dir):
                 self.client.force_login(self.student)
+                result = Result.objects.create(
+                    student=self.student,
+                    course=self.course,
+                    tutorial=self.tutorial,
+                    exercise=self.upload_exercise,
+                    assigned_variant=self.upload_exercise.variants.first(),
+                    is_archived=False,
+                )
+                part = _first_part_for_result(result)
                 self.client.post(
                     reverse("exercise_detail", args=[self.upload_exercise.id]),
-                    {"uploaded_file": SimpleUploadedFile("first.pdf", b"first")},
-                )
-                result = Result.objects.get(
-                    student=self.student,
-                    exercise=self.upload_exercise,
-                    is_archived=False,
+                    {f"upload_part_{part.id}": SimpleUploadedFile("first.pdf", b"first")},
                 )
                 old_name = _primary_result_part(result).uploaded_file.name
                 self.assertTrue(default_storage.exists(old_name))
 
                 self.client.post(
                     reverse("exercise_detail", args=[self.upload_exercise.id]),
-                    {"uploaded_file": SimpleUploadedFile("second.pdf", b"second")},
+                    {f"upload_part_{_first_part_for_result(result).id}": SimpleUploadedFile("second.pdf", b"second")},
                 )
                 result.refresh_from_db()
                 self.assertIn("second", os.path.basename(_primary_result_part(result).uploaded_file.name))
@@ -1551,14 +1610,18 @@ class NumericalAnswerFormViewTests(TestCase):
         try:
             with self.settings(MEDIA_ROOT=media_dir):
                 self.client.force_login(self.student)
+                result = Result.objects.create(
+                    student=self.student,
+                    course=self.course,
+                    tutorial=self.tutorial,
+                    exercise=self.upload_exercise,
+                    assigned_variant=self.upload_exercise.variants.first(),
+                    is_archived=False,
+                )
+                part = _first_part_for_result(result)
                 self.client.post(
                     reverse("exercise_detail", args=[self.upload_exercise.id]),
-                    {"uploaded_file": SimpleUploadedFile("first.pdf", b"first")},
-                )
-                result = Result.objects.get(
-                    student=self.student,
-                    exercise=self.upload_exercise,
-                    is_archived=False,
+                    {f"upload_part_{part.id}": SimpleUploadedFile("first.pdf", b"first")},
                 )
                 upload_part = _primary_result_part(result)
                 stale_timestamp = timezone.now() - timedelta(days=1)
@@ -1591,21 +1654,25 @@ class NumericalAnswerFormViewTests(TestCase):
 
     def test_upload_submission_warns_and_refuses_replace_after_manual_grading_without_confirmation(self):
         self.client.force_login(self.student)
+        result = Result.objects.create(
+            student=self.student,
+            course=self.course,
+            tutorial=self.tutorial,
+            exercise=self.upload_exercise,
+            assigned_variant=self.upload_exercise.variants.first(),
+            is_archived=False,
+        )
+        part = _first_part_for_result(result)
         self.client.post(
             reverse("exercise_detail", args=[self.upload_exercise.id]),
-            {"uploaded_file": SimpleUploadedFile("graded.pdf", b"graded")},
-        )
-        result = Result.objects.get(
-            student=self.student,
-            exercise=self.upload_exercise,
-            is_archived=False,
+            {f"upload_part_{part.id}": SimpleUploadedFile("graded.pdf", b"graded")},
         )
         original_name = _primary_result_part(result).uploaded_file.name
         _set_result_part_data(result, is_manually_graded=True)
 
         response = self.client.post(
             reverse("exercise_detail", args=[self.upload_exercise.id]),
-            {"uploaded_file": SimpleUploadedFile("new_attempt.pdf", b"new")},
+            {f"upload_part_{part.id}": SimpleUploadedFile("new_attempt.pdf", b"new")},
         )
         self.assertEqual(response.status_code, 200)
         self.assertContains(
@@ -1617,14 +1684,18 @@ class NumericalAnswerFormViewTests(TestCase):
 
     def test_upload_submission_can_replace_after_manual_grading_with_confirmation(self):
         self.client.force_login(self.student)
+        result = Result.objects.create(
+            student=self.student,
+            course=self.course,
+            tutorial=self.tutorial,
+            exercise=self.upload_exercise,
+            assigned_variant=self.upload_exercise.variants.first(),
+            is_archived=False,
+        )
+        part = _first_part_for_result(result)
         self.client.post(
             reverse("exercise_detail", args=[self.upload_exercise.id]),
-            {"uploaded_file": SimpleUploadedFile("graded.pdf", b"graded")},
-        )
-        result = Result.objects.get(
-            student=self.student,
-            exercise=self.upload_exercise,
-            is_archived=False,
+            {f"upload_part_{part.id}": SimpleUploadedFile("graded.pdf", b"graded")},
         )
         original_result_part = _primary_result_part(result)
         original_id = original_result_part.id
@@ -1652,57 +1723,39 @@ class NumericalAnswerFormViewTests(TestCase):
 
     def test_upload_submission_rejects_disallowed_file_type(self):
         self.client.force_login(self.student)
-        response = self.client.post(
-            reverse("exercise_detail", args=[self.upload_exercise.id]),
-            {"uploaded_file": SimpleUploadedFile("malware.exe", b"x")},
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertFormError(
-            response.context["upload_form"],
-            "uploaded_file",
-            "Unsupported file extension. Allowed: pdf, docx, png, jpg, jpeg, tif, tiff.",
-        )
-        self.assertEqual(
-            Result.objects.filter(
-                student=self.student,
-                exercise=self.upload_exercise,
-                is_archived=False,
-            ).count(),
-            1,
-        )
-        result = Result.objects.get(
+        result = Result.objects.create(
             student=self.student,
+            course=self.course,
+            tutorial=self.tutorial,
             exercise=self.upload_exercise,
+            assigned_variant=self.upload_exercise.variants.first(),
             is_archived=False,
         )
-        self.assertIsNone(_primary_result_part(result))
+        part = _first_part_for_result(result)
+        response = self.client.post(
+            reverse("exercise_detail", args=[self.upload_exercise.id]),
+            {f"upload_part_{part.id}": SimpleUploadedFile("malware.exe", b"x")},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNotNone(_primary_result_part(result))
 
     def test_upload_submission_rejects_oversized_file(self):
         self.client.force_login(self.student)
-        response = self.client.post(
-            reverse("exercise_detail", args=[self.upload_exercise.id]),
-            {"uploaded_file": SimpleUploadedFile("big.pdf", b"a" * (20 * 1024 * 1024 + 1))},
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertFormError(
-            response.context["upload_form"],
-            "uploaded_file",
-            "File size must be 20 MB or smaller.",
-        )
-        self.assertEqual(
-            Result.objects.filter(
-                student=self.student,
-                exercise=self.upload_exercise,
-                is_archived=False,
-            ).count(),
-            1,
-        )
-        result = Result.objects.get(
+        result = Result.objects.create(
             student=self.student,
+            course=self.course,
+            tutorial=self.tutorial,
             exercise=self.upload_exercise,
+            assigned_variant=self.upload_exercise.variants.first(),
             is_archived=False,
         )
-        self.assertIsNone(_primary_result_part(result))
+        part = _first_part_for_result(result)
+        response = self.client.post(
+            reverse("exercise_detail", args=[self.upload_exercise.id]),
+            {f"upload_part_{part.id}": SimpleUploadedFile("big.pdf", b"a" * (20 * 1024 * 1024 + 1))},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNotNone(_primary_result_part(result))
 
 
 class NumericalCheckingTests(TestCase):

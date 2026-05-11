@@ -196,10 +196,6 @@ class ExerciseVariant(models.Model):
     def __str__(self):
         return f"{self.exercise.title} - Variant {self.id}"
 
-    def clean(self):
-        super().clean()
-        return
-
     def save(self, *args, **kwargs):
         self.exercise_text = sanitize_rich_text(self.exercise_text)
         super().save(*args, **kwargs)
