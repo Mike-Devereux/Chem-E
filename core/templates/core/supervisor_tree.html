@@ -203,7 +203,20 @@
             container.appendChild(link);
         }
 
-        function addCreateButton(container, childType, parentType, parentId) {
+        function nextSequentialOrderIndex(items, fallback = 1) {
+            if (!Array.isArray(items) || items.length === 0) {
+                return fallback;
+            }
+            const parsed = items
+                .map((item) => Number(item && item.order_index))
+                .filter((value) => Number.isInteger(value) && value > 0);
+            if (parsed.length === 0) {
+                return fallback;
+            }
+            return Math.max(...parsed) + 1;
+        }
+
+        function addCreateButton(container, childType, parentType, parentId, parentNodeData = null) {
             const link = document.createElement("a");
             link.href = "#";
             link.className = "tree-action-link";
@@ -211,9 +224,19 @@
             link.addEventListener("click", (event) => {
                 event.preventDefault();
                 event.stopPropagation();
+                const nodeData = {id: null};
+                if (childType === "part" && parentNodeData) {
+                    nodeData.order_index = nextSequentialOrderIndex(parentNodeData.parts, 1);
+                }
+                if (childType === "variant" && parentNodeData && Array.isArray(parentNodeData.variants)) {
+                    const previousVariant = parentNodeData.variants[parentNodeData.variants.length - 1];
+                    if (previousVariant && typeof previousVariant.exercise_text === "string") {
+                        nodeData.exercise_text = previousVariant.exercise_text;
+                    }
+                }
                 selectedNode = {
                     nodeType: childType,
-                    nodeData: {id: null},
+                    nodeData: nodeData,
                     parentType: parentType,
                     parentId: parentId,
                 };
@@ -564,6 +587,28 @@
             return [];
         }
 
+        function applyPartAnswerTypeFieldState(fieldsRoot) {
+            const answerTypeInput = fieldsRoot.querySelector('[name="answer_type"]');
+            const referenceInput = fieldsRoot.querySelector('[name="reference_solution"]');
+            const toleranceInput = fieldsRoot.querySelector('[name="absolute_tolerance"]');
+            if (!answerTypeInput || !referenceInput || !toleranceInput) {
+                return;
+            }
+
+            const syncState = () => {
+                const isDocumentUpload = answerTypeInput.value === "document_upload";
+                if (isDocumentUpload) {
+                    referenceInput.value = "";
+                    toleranceInput.value = "";
+                }
+                referenceInput.disabled = isDocumentUpload;
+                toleranceInput.disabled = isDocumentUpload;
+            };
+
+            answerTypeInput.addEventListener("change", syncState);
+            syncState();
+        }
+
         function renderEditor() {
             const emptyState = document.getElementById("tree-editor-empty");
             const fieldsRoot = document.getElementById("tree-editor-fields");
@@ -685,6 +730,10 @@
                 wrapper.appendChild(label);
                 fieldsRoot.appendChild(wrapper);
             });
+
+            if (selectedNode.nodeType === "part") {
+                applyPartAnswerTypeFieldState(fieldsRoot);
+            }
         }
 
         async function submitEditor(event) {
@@ -819,7 +868,7 @@
                                 variant.id
                             );
                             addEditButton(node.querySelector("summary"), "variant", variant);
-                            addCreateButton(node.querySelector("summary"), "part", "variant", variant.id);
+                            addCreateButton(node.querySelector("summary"), "part", "variant", variant.id, variant);
                             addDeleteButton(node.querySelector("summary"), "variant", variant.id);
                             return node;
                         });
@@ -830,7 +879,7 @@
                             exercise.id
                         );
                         addEditButton(node.querySelector("summary"), "exercise", exercise);
-                        addCreateButton(node.querySelector("summary"), "variant", "exercise", exercise.id);
+                        addCreateButton(node.querySelector("summary"), "variant", "exercise", exercise.id, exercise);
                         addDeleteButton(node.querySelector("summary"), "exercise", exercise.id);
                         return node;
                     });
@@ -841,13 +890,13 @@
                         tutorial.id
                     );
                     addEditButton(node.querySelector("summary"), "tutorial", tutorial);
-                    addCreateButton(node.querySelector("summary"), "exercise", "tutorial", tutorial.id);
+                    addCreateButton(node.querySelector("summary"), "exercise", "tutorial", tutorial.id, tutorial);
                     addDeleteButton(node.querySelector("summary"), "tutorial", tutorial.id);
                     return node;
                 });
                 const courseNode = createNode(`Course: ${course.title}`, tutorialNodes, "course", course.id);
                 addEditButton(courseNode.querySelector("summary"), "course", course);
-                addCreateButton(courseNode.querySelector("summary"), "tutorial", "course", course.id);
+                addCreateButton(courseNode.querySelector("summary"), "tutorial", "course", course.id, course);
                 addDeleteButton(courseNode.querySelector("summary"), "course", course.id);
                 const item = document.createElement("li");
                 item.appendChild(courseNode);

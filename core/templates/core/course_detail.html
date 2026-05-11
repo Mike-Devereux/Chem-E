@@ -6,15 +6,15 @@
     <title>{{ course.title }}</title>
 </head>
 <body>
-    <p><a href="{% url 'home' %}">Back to courses</a></p>
+    <p><a href="{% url 'home' %}">Zurück zur Kursliste</a></p>
     <h1>{{ course.title }}</h1>
     {% if course.description %}
         <p>{{ course.description }}</p>
     {% endif %}
 
-    <h2>Tutorials</h2>
+    <h2>Übungssessionen</h2>
     {% if tutorials %}
-        <ul>
+        <ol>
             {% if request.user.role == "student" %}
                 {% for row in tutorial_rows %}
                     <li>
@@ -33,7 +33,7 @@
                     </li>
                 {% endfor %}
             {% endif %}
-        </ul>
+        </ol>
     {% else %}
         <p>No tutorials available for this course.</p>
     {% endif %}

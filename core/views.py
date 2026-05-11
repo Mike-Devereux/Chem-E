@@ -354,7 +354,7 @@ class SupervisorTreeNodeUpdateView(SupervisorRequiredMixin, View):
         part_data = {
             "label": request.POST.get("label", part.label),
             "prompt_text": request.POST.get("prompt_text", part.prompt_text),
-            "answer_type": part.answer_type,
+            "answer_type": request.POST.get("answer_type", part.answer_type),
             "reference_solution": request.POST.get(
                 "reference_solution",
                 "" if part.reference_solution is None else str(part.reference_solution),
